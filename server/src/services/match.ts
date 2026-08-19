@@ -9,11 +9,13 @@ import {
   type TcgLang,
 } from "./tcgdex.js";
 import { artworkScores, layoutScores, symbolScores } from "./vision.js";
+import { orbScores } from "./orbMatch.js";
 
 export type VisionHints = {
   artHash: bigint;
   cardHash?: bigint;
   symbolHash?: bigint;
+  queryImage?: Buffer;
   foil: boolean;
 };
 
@@ -78,6 +80,7 @@ function scoreCard(
   artScore = 0,
   layoutScore = 0,
   symbolScore = 0,
+  orbScore = 0,
   foil = false,
 ): ScoredMatch {
   const reasons: string[] = [];
@@ -146,6 +149,11 @@ function scoreCard(
   if (layoutScore >= 40) {
     score += Math.round(layoutScore * 0.8);
     reasons.push("layout");
+  }
+
+  if (orbScore >= 18) {
+    score += Math.round(orbScore * 2.2);
+    reasons.push("orb");
   }
 
   if (foil && (card.variants?.holo || card.rarity?.toLowerCase().includes("holo"))) {
@@ -258,7 +266,7 @@ export async function matchCard(
     ...new Map([...stamped, ...numbered, ...byText].map((card) => [card.id, card])).values(),
   ].slice(0, 80);
 
-  const cards = await hydrateCards(ranked, lang, 60);
+  const cards = await hydrateCards(ranked, lang, 36);
   const images = cards.map((card) => card.image);
   const visuals = vision ? await artworkScores(vision.artHash, images) : cards.map(() => 0);
   const layouts =
@@ -270,6 +278,7 @@ export async function matchCard(
           cards.map((card) => card.set?.symbol),
         )
       : cards.map(() => 0);
+  const orbs = vision?.queryImage ? await orbScores(vision.queryImage, images) : cards.map(() => 0);
 
   return cards
     .map((card, index) =>
@@ -279,6 +288,7 @@ export async function matchCard(
         visuals[index] ?? 0,
         layouts[index] ?? 0,
         symbols[index] ?? 0,
+        orbs[index] ?? 0,
         vision?.foil ?? false,
       ),
     )

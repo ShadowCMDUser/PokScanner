@@ -44,6 +44,7 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
         artHash,
         cardHash,
         symbolHash: markHash,
+        queryImage: regions.card,
         foil: false,
       }),
     ]);
