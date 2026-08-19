@@ -6,6 +6,7 @@ import { LoginPage } from "./components/LoginPage";
 import { PokeballIcon } from "./components/Pokeball";
 import { Scanner } from "./components/Scanner";
 import { Search } from "./components/Search";
+import { ScanActionProvider, useScanAction } from "./ScanAction";
 import type { CardCondition, Lang, Page, TcgdexCard } from "./types";
 
 const LANGS: { id: Lang; label: string }[] = [
@@ -69,6 +70,30 @@ export default function App() {
   }
 
   return (
+    <ScanActionProvider>
+      <AppShell page={page} lang={lang} notice={notice} goTo={goTo} setLang={setLang} onAdd={handleAdd} />
+    </ScanActionProvider>
+  );
+}
+
+function AppShell({
+  page,
+  lang,
+  notice,
+  goTo,
+  setLang,
+  onAdd,
+}: {
+  page: Page;
+  lang: Lang;
+  notice: string | null;
+  goTo: (page: Page) => void;
+  setLang: (lang: Lang) => void;
+  onAdd: (card: TcgdexCard, condition: CardCondition) => Promise<void>;
+}) {
+  const { handle } = useScanAction();
+
+  return (
     <div className={`app${page === "scan" ? " app-scan" : ""}`}>
       <header className="topbar">
         <div className="brand">
@@ -112,9 +137,9 @@ export default function App() {
       {notice && <div className="toast">{notice}</div>}
 
       <main className={page === "scan" ? "page page-scan" : "page"}>
-        {page === "scan" && <Scanner lang={lang} onAdd={handleAdd} />}
+        {page === "scan" && <Scanner lang={lang} onAdd={onAdd} />}
         {page === "collection" && <Collection />}
-        {page === "search" && <Search lang={lang} onAdd={handleAdd} />}
+        {page === "search" && <Search lang={lang} onAdd={onAdd} />}
       </main>
 
       <nav className="tabbar">
@@ -125,8 +150,18 @@ export default function App() {
           </svg>
           Collectie
         </button>
-        <button className={`tab-scan${page === "scan" ? " active" : ""}`} onClick={() => goTo("scan")} aria-label="Scan">
-          <PokeballIcon />
+        <button
+          className={`tab-scan${page === "scan" ? " active" : ""}`}
+          onClick={() => {
+            if (page !== "scan") {
+              goTo("scan");
+              return;
+            }
+            handle?.capture();
+          }}
+          aria-label="Scan"
+        >
+          <PokeballIcon spin={Boolean(handle?.scanning)} />
         </button>
         <button className={page === "search" ? "active" : ""} onClick={() => goTo("search")}>
           <svg viewBox="0 0 24 24" aria-hidden="true">

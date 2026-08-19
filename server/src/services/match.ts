@@ -87,8 +87,42 @@ function scoreCard(card: TcgdexCard, ocr: OcrResult, artScore = 0, foil = false)
   }
 
   if (ocr.hp && card.hp && Math.abs(card.hp - ocr.hp) <= 10) {
-    score += 10;
+    score += 16;
     reasons.push("hp");
+  }
+
+  if (ocr.illustrator && card.illustrator && similarity(card.illustrator, ocr.illustrator) >= 0.8) {
+    score += 22;
+    reasons.push("illustrator");
+  }
+
+  if (ocr.ability && card.abilities?.some((item) => similarity(item.name, ocr.ability!) >= 0.84)) {
+    score += 24;
+    reasons.push("ability");
+  }
+
+  for (const attack of ocr.attacks) {
+    const found = card.attacks?.find((item) => similarity(item.name, attack.name) >= 0.84);
+    if (!found) continue;
+    score += 20;
+    reasons.push(`aanval ${found.name}`);
+    const damage = Number(String(found.damage ?? "").replace(/\D/g, ""));
+    if (attack.damage && damage && Math.abs(damage - attack.damage) <= 10) {
+      score += 12;
+      reasons.push("schade");
+    }
+  }
+
+  if (ocr.regulationMark && card.regulationMark) {
+    if (card.regulationMark.toUpperCase() === ocr.regulationMark.toUpperCase()) {
+      score += 10;
+      reasons.push("reg");
+    }
+  }
+
+  if (ocr.stage && card.stage && similarity(card.stage, ocr.stage) >= 0.8) {
+    score += 8;
+    reasons.push("stage");
   }
 
   if (ocr.setTotal && card.set?.cardCount) {
@@ -166,6 +200,13 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
         }),
       );
     }
+    if (ocr.hp) {
+      queries.push(searchCards(lang, { name, hp: ocr.hp, itemsPerPage: 30 }));
+    }
+  }
+
+  if (ocr.illustrator) {
+    queries.push(searchCards(lang, { illustrator: ocr.illustrator, itemsPerPage: 40 }));
   }
 
   if (!queries.length) return [];

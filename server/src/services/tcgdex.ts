@@ -74,6 +74,7 @@ export async function searchCards(
     localId?: string;
     evolveFrom?: string;
     hp?: number;
+    illustrator?: string;
     page?: number;
     itemsPerPage?: number;
     sortOrder?: "ASC" | "DESC";
@@ -86,6 +87,7 @@ export async function searchCards(
       localId: filters.localId,
       evolveFrom: filters.evolveFrom,
       hp: filters.hp,
+      illustrator: filters.illustrator,
       "pagination:page": filters.page ?? 1,
       "pagination:itemsPerPage": filters.itemsPerPage ?? 40,
       "sort:field": "releaseDate",

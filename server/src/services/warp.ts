@@ -266,16 +266,5 @@ export async function flattenCard(input: Buffer) {
   }
 
   if (!card) return source;
-
-  return sharp({
-    create: {
-      width: 900,
-      height: 1200,
-      channels: 3,
-      background: { r: 20, g: 20, b: 24 },
-    },
-  })
-    .composite([{ input: card, gravity: "center" }])
-    .jpeg({ quality: 95 })
-    .toBuffer();
+  return card;
 }

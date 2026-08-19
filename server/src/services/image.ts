@@ -181,15 +181,17 @@ export async function prepareForOcr(input: Buffer) {
   const cw = cardMeta.width ?? cardBox.width;
   const ch = cardMeta.height ?? cardBox.height;
 
-  const namePlate = extractBox(cw, ch, 0.04, 0.045, 0.7, 0.125);
-  const nameBox = extractBox(cw, ch, 0.03, 0.03, 0.74, 0.17);
-  const illustration = extractBox(cw, ch, 0.07, 0.17, 0.93, 0.61);
+  const namePlate = extractBox(cw, ch, 0.04, 0.045, 0.72, 0.13);
+  const nameBox = extractBox(cw, ch, 0.03, 0.03, 0.78, 0.18);
+  const illustration = extractBox(cw, ch, 0.07, 0.17, 0.93, 0.58);
+  const bodyBox = extractBox(cw, ch, 0.05, 0.46, 0.95, 0.84);
   const numberBox = extractBox(cw, ch, 0.0, 0.82, 1, 0.99);
 
-  const [full, plate, top, bottom, bottomInk, art] = await Promise.all([
+  const [full, plate, top, body, bottom, bottomInk, art] = await Promise.all([
     enhanceText(sharp(card).resize({ width: 1100, withoutEnlargement: true })).toBuffer(),
     enhanceText(sharp(card).extract(namePlate).resize({ width: 800, withoutEnlargement: false })).toBuffer(),
     enhanceText(sharp(card).extract(nameBox).resize({ width: 900, withoutEnlargement: false })).toBuffer(),
+    enhanceText(sharp(card).extract(bodyBox).resize({ width: 1000, withoutEnlargement: false })).toBuffer(),
     enhanceNumbers(sharp(card).extract(numberBox).resize({ width: 1000, withoutEnlargement: false })).toBuffer(),
     sharp(card)
       .extract(numberBox)
@@ -202,7 +204,7 @@ export async function prepareForOcr(input: Buffer) {
     sharp(card).extract(illustration).jpeg({ quality: 90 }).toBuffer(),
   ]);
 
-  return { full, plate, top, bottom, bottomInk, art, card };
+  return { full, plate, top, body, bottom, bottomInk, art, card };
 }
 
 export async function extractIllustration(input: Buffer) {

@@ -55,6 +55,11 @@ export type OcrResult = {
   hp: number | null;
   collectorNumber: string | null;
   setTotal: string | null;
+  illustrator?: string | null;
+  stage?: string | null;
+  regulationMark?: string | null;
+  ability?: string | null;
+  attacks?: { name: string; damage: number | null }[];
   confidence: number;
 };
 

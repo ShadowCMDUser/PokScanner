@@ -256,6 +256,11 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
     hp: Number.isFinite(hpValue) ? hpValue : null,
     collectorNumber: payload.card_info?.card_number ?? parsed[0]?.info.number ?? null,
     setTotal: null,
+    illustrator: null,
+    stage: null,
+    regulationMark: null,
+    ability: null,
+    attacks: [],
     confidence: matches[0]?.score ?? 0,
   };
 

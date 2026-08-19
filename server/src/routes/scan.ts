@@ -1,7 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
+import { prepareForOcr } from "../services/image.js";
+import { matchCard } from "../services/match.js";
+import { emptyOcr, readCardText } from "../services/ocr.js";
+import { differenceHash } from "../services/vision.js";
 import { flattenCard } from "../services/warp.js";
-import { scanWithClip } from "../services/clipScan.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,7 +30,10 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
 
     const lang = typeof req.body?.lang === "string" ? req.body.lang : "en";
     const flattened = await flattenCard(fileBuffer);
-    const { ocr, matches } = await scanWithClip(flattened, lang);
+    const regions = await prepareForOcr(flattened);
+    const ocr = await readCardText(regions);
+    const artHash = await differenceHash(regions.art);
+    const matches = await matchCard(ocr, lang, { artHash, foil: false });
 
     res.json({
       ocr,
@@ -36,23 +42,6 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan mislukt";
-    const notFound = /no card detected/i.test(message);
-    res.status(notFound ? 200 : 500).json(
-      notFound
-        ? {
-            ocr: {
-              rawText: "",
-              nameCandidates: [],
-              evolvesFrom: null,
-              hp: null,
-              collectorNumber: null,
-              setTotal: null,
-              confidence: 0,
-            },
-            matches: [],
-            bestMatch: null,
-          }
-        : { error: message },
-    );
+    res.status(500).json({ error: message, ocr: emptyOcr(), matches: [], bestMatch: null });
   }
 });

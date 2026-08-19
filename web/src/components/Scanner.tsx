@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cardArt, formatEur, scanCard, trendPrice } from "../api";
+import { useScanAction } from "../ScanAction";
 import { PokeballIcon } from "./Pokeball";
-import type { CardCondition, Lang, ScanResponse, TcgdexCard } from "../types";
+import type { CardCondition, Lang, OcrResult, ScanResponse, TcgdexCard } from "../types";
 
 const CONDITIONS: { id: CardCondition; label: string }[] = [
   { id: "mint", label: "Mint" },
@@ -23,14 +24,28 @@ function toBlob(canvas: HTMLCanvasElement) {
   });
 }
 
+function readout(ocr: OcrResult) {
+  const bits = [
+    ocr.nameCandidates[0],
+    ocr.hp ? `HP ${ocr.hp}` : null,
+    ocr.evolvesFrom ? `van ${ocr.evolvesFrom}` : null,
+    ocr.collectorNumber ? `#${ocr.collectorNumber}${ocr.setTotal ? `/${ocr.setTotal}` : ""}` : null,
+    ocr.ability,
+    ocr.attacks?.[0] ? `${ocr.attacks[0].name} ${ocr.attacks[0].damage ?? ""}`.trim() : null,
+    ocr.illustrator,
+  ].filter(Boolean);
+  return bits.join(" · ");
+}
+
 export function Scanner({ lang, onAdd }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureCanvas = useRef<HTMLCanvasElement | null>(null);
   const langRef = useRef(lang);
+  const { register } = useScanAction();
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Donkere achtergrond, kaart in het kader, dan tikken");
+  const [hint, setHint] = useState<string | null>("Kaart in het kader, tik de pokéball onderaan");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -78,9 +93,17 @@ export function Scanner({ lang, onAdd }: Props) {
     };
   }, [camTick]);
 
-  async function capture() {
+  const capture = useCallback(() => {
     const video = videoRef.current;
-    if (!video || scanning || result || video.readyState < 2 || !video.videoWidth) return;
+    if (!video || scanning || video.readyState < 2 || !video.videoWidth) return;
+
+    if (result) {
+      setResult(null);
+      setSaved(false);
+      setSelectedId(null);
+      setHint("Kaart in het kader, tik de pokéball onderaan");
+      return;
+    }
 
     captureCanvas.current ??= document.createElement("canvas");
     const canvas = captureCanvas.current;
@@ -91,39 +114,41 @@ export function Scanner({ lang, onAdd }: Props) {
     ctx.drawImage(video, 0, 0);
 
     setScanning(true);
-    setHint("Kaart rechtzetten en herkennen...");
+    setHint("Hele kaart uitlezen...");
 
-    try {
-      const blob = await toBlob(canvas);
-      if (!blob) throw new Error("Kon geen foto maken");
-      const scan = await scanCard(blob, langRef.current);
-      if (!scan.matches.length || !scan.bestMatch) {
-        setHint("Geen duidelijke match. Kaart stiller en rechter in het kader.");
-        return;
-      }
-      setResult(scan);
-      setSelectedId(scan.bestMatch.card.id);
-      setHint(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      setHint(
-        /timeout|abort/i.test(message)
-          ? "Scanner start op, tik zo nog eens."
-          : /no card detected/i.test(message)
-            ? "Geen kaart gezien. Vul het beeld en tik opnieuw."
-            : "Scan mislukt, tik opnieuw.",
-      );
-    } finally {
-      setScanning(false);
-    }
-  }
+    void toBlob(canvas)
+      .then(async (blob) => {
+        if (!blob) throw new Error("Kon geen foto maken");
+        const scan = await scanCard(blob, langRef.current);
+        if (!scan.matches.length || !scan.bestMatch) {
+          setHint(
+            scan.ocr.nameCandidates[0]
+              ? `Gelezen: ${readout(scan.ocr)}. Nog geen catalogus-match.`
+              : "Kon de tekst niet lezen. Houd de kaart stiller in het kader.",
+          );
+          return;
+        }
+        setResult(scan);
+        setSelectedId(scan.bestMatch.card.id);
+        setHint(null);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "";
+        setHint(/timeout|abort/i.test(message) ? "Even geduld, tik opnieuw." : "Scan mislukt, tik opnieuw.");
+      })
+      .finally(() => {
+        setScanning(false);
+      });
+  }, [result, scanning]);
 
-  function reset() {
-    setResult(null);
-    setSaved(false);
-    setSelectedId(null);
-    setHint("Donkere achtergrond, kaart in het kader, dan tikken");
-  }
+  useEffect(() => {
+    register({
+      capture,
+      scanning,
+      busy: scanning || Boolean(result),
+    });
+    return () => register(null);
+  }, [capture, register, result, scanning]);
 
   const selected =
     result?.matches.find((match) => match.card.id === selectedId)?.card ??
@@ -154,17 +179,6 @@ export function Scanner({ lang, onAdd }: Props) {
             {hint}
           </div>
         )}
-
-        {!result && !needsCamera && streamReady && (
-          <button
-            className="capture-btn"
-            onClick={() => void capture()}
-            disabled={scanning}
-            aria-label="Kaart scannen"
-          >
-            <PokeballIcon spin={scanning} />
-          </button>
-        )}
       </div>
 
       {result && selected && (
@@ -173,33 +187,37 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-top">
             <div>
               <h2>Is dit je kaart?</h2>
-              <p className="muted">
-                {result.bestMatch
-                  ? `${result.bestMatch.score}% CLIP-match · tik een andere foto als het mis is`
-                  : "Tik de juiste foto"}
-              </p>
+              <p className="muted">{readout(result.ocr) || "Tik de juiste foto"}</p>
             </div>
-            <button className="btn ghost btn-sm" onClick={reset}>
+            <button
+              className="btn ghost btn-sm"
+              onClick={() => {
+                setResult(null);
+                setSaved(false);
+                setSelectedId(null);
+                setHint("Kaart in het kader, tik de pokéball onderaan");
+              }}
+            >
               Opnieuw
             </button>
           </div>
 
           <div className="picker-track">
-            {(result.matches.length ? result.matches : [result.bestMatch]).filter(Boolean).map(
+            {(result.matches.length ? result.matches : result.bestMatch ? [result.bestMatch] : []).map(
               (match) => (
                 <button
-                  key={match!.card.id}
-                  className={`picker-card${match!.card.id === selected.id ? " selected" : ""}`}
-                  onClick={() => setSelectedId(match!.card.id)}
+                  key={match.card.id}
+                  className={`picker-card${match.card.id === selected.id ? " selected" : ""}`}
+                  onClick={() => setSelectedId(match.card.id)}
                 >
-                  {match!.card.image ? (
-                    <img src={cardArt(match!.card.image, "high")} alt={match!.card.name} />
+                  {match.card.image ? (
+                    <img src={cardArt(match.card.image, "high")} alt={match.card.name} />
                   ) : (
-                    <div className="picker-fallback">{match!.card.name}</div>
+                    <div className="picker-fallback">{match.card.name}</div>
                   )}
-                  <strong>{match!.card.name}</strong>
+                  <strong>{match.card.name}</strong>
                   <span className="muted">
-                    {match!.card.set?.name} · #{match!.card.localId} · {match!.score}%
+                    {match.card.set?.name} · #{match.card.localId}
                   </span>
                 </button>
               ),

@@ -54,6 +54,19 @@ export type TcgdexCard = TcgdexCardBrief & {
   evolveFrom?: string;
   description?: string;
   regulationMark?: string;
+  retreat?: number;
+  attacks?: {
+    name: string;
+    damage?: string | number;
+    effect?: string;
+    cost?: string[];
+  }[];
+  abilities?: {
+    name: string;
+    type?: string;
+    effect?: string;
+  }[];
+  weaknesses?: { type?: string; value?: string }[];
   set?: TcgdexSet;
   variants?: {
     holo?: boolean;
@@ -74,6 +87,11 @@ export type OcrResult = {
   hp: number | null;
   collectorNumber: string | null;
   setTotal: string | null;
+  illustrator: string | null;
+  stage: string | null;
+  regulationMark: string | null;
+  ability: string | null;
+  attacks: { name: string; damage: number | null }[];
   confidence: number;
 };
 
