@@ -1,6 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#070b14"/>
-  <circle cx="256" cy="256" r="188" fill="#111118" stroke="#FFCB05" stroke-width="28"/>
-  <path d="M68 256h376" stroke="#E3350D" stroke-width="64"/>
-  <circle cx="256" cy="256" r="62" fill="#fff" stroke="#111118" stroke-width="28"/>
+  <rect width="512" height="512" rx="112" fill="#0B0B0F"/>
+  <defs>
+    <clipPath id="ball">
+      <circle cx="256" cy="256" r="168"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#ball)">
+    <rect x="80" y="80" width="352" height="176" fill="#EE1515"/>
+    <rect x="80" y="256" width="352" height="176" fill="#FFFFFF"/>
+    <rect x="80" y="232" width="352" height="48" fill="#111111"/>
+  </g>
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#111111" stroke-width="20"/>
+  <circle cx="256" cy="256" r="58" fill="#111111"/>
+  <circle cx="256" cy="256" r="36" fill="#FFFFFF"/>
 </svg>

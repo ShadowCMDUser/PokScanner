@@ -3,6 +3,7 @@ import { addCard } from "./api";
 import { authClient } from "./auth-client";
 import { Collection } from "./components/Collection";
 import { LoginPage } from "./components/LoginPage";
+import { PokeballIcon } from "./components/Pokeball";
 import { Scanner } from "./components/Scanner";
 import { Search } from "./components/Search";
 import type { CardCondition, Lang, Page, TcgdexCard } from "./types";
@@ -28,16 +29,6 @@ function setHash(page: Page) {
   }
 }
 
-function PokeballIcon() {
-  return (
-    <svg className="pokeball" viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="30" fill="#111118" stroke="#FFCB05" strokeWidth="4" />
-      <path d="M4 32h56" stroke="#E3350D" strokeWidth="10" />
-      <circle cx="32" cy="32" r="10" fill="#fff" stroke="#111118" strokeWidth="4" />
-    </svg>
-  );
-}
-
 export default function App() {
   const session = authClient.useSession();
   const user = session.data?.user;
@@ -58,15 +49,15 @@ export default function App() {
 
   async function handleAdd(card: TcgdexCard, condition: CardCondition) {
     await addCard(card.id, lang, condition);
-    setNotice(`${card.name} is toegevoegd aan je collectie.`);
-    setTimeout(() => setNotice(null), 2500);
+    setNotice(`${card.name} toegevoegd`);
+    setTimeout(() => setNotice(null), 2200);
   }
 
   if (session.isPending) {
     return (
       <main className="login-screen">
         <div className="login-brand">
-          <PokeballIcon />
+          <PokeballIcon className="pokeball login-ball" spin />
           <p className="muted">Laden...</p>
         </div>
       </main>
@@ -78,56 +69,73 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${page === "scan" ? " app-scan" : ""}`}>
       <header className="topbar">
         <div className="brand">
-          <PokeballIcon />
-          <div>
-            <h1>PokScanner</h1>
-            <p>Scan, herken en catalogiseer je Pokémon-kaarten.</p>
-          </div>
+          <PokeballIcon className="pokeball" />
+          {page !== "scan" && <h1>PokScanner</h1>}
         </div>
         <div className="top-actions">
-          <nav className="nav">
-            <button className={page === "scan" ? "active" : ""} onClick={() => goTo("scan")}>
-              Scanner
-            </button>
-            <button
-              className={page === "collection" ? "active" : ""}
-              onClick={() => goTo("collection")}
-            >
-              Collectie
-            </button>
-            <button className={page === "search" ? "active" : ""} onClick={() => goTo("search")}>
-              Zoeken
-            </button>
-          </nav>
-          <select value={lang} onChange={(event) => setLang(event.target.value as Lang)}>
+          <select
+            className="lang-select"
+            value={lang}
+            onChange={(event) => setLang(event.target.value as Lang)}
+            aria-label="Taal"
+          >
             {LANGS.map((item) => (
               <option key={item.id} value={item.id}>
-                Taal {item.label}
+                {item.label}
               </option>
             ))}
           </select>
-          <div className="user-chip">
-            <span>{user.name || user.email}</span>
-            <button
-              className="btn ghost"
-              onClick={() => {
-                void authClient.signOut();
-              }}
-            >
-              Uitloggen
-            </button>
-          </div>
+          <button
+            className="icon-btn"
+            aria-label="Uitloggen"
+            onClick={() => {
+              void authClient.signOut();
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3M15 8l4 4-4 4M9 12h10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
       </header>
 
-      {notice && <div className="scan-status">{notice}</div>}
+      {notice && <div className="toast">{notice}</div>}
 
-      {page === "scan" && <Scanner lang={lang} onAdd={handleAdd} />}
-      {page === "collection" && <Collection />}
-      {page === "search" && <Search lang={lang} onAdd={handleAdd} />}
+      <main className={page === "scan" ? "page page-scan" : "page"}>
+        {page === "scan" && <Scanner lang={lang} onAdd={handleAdd} />}
+        {page === "collection" && <Collection />}
+        {page === "search" && <Search lang={lang} onAdd={handleAdd} />}
+      </main>
+
+      <nav className="tabbar">
+        <button className={page === "collection" ? "active" : ""} onClick={() => goTo("collection")}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="6" width="11" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <rect x="8" y="4" width="11" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+          Collectie
+        </button>
+        <button className={`tab-scan${page === "scan" ? " active" : ""}`} onClick={() => goTo("scan")} aria-label="Scan">
+          <PokeballIcon />
+        </button>
+        <button className={page === "search" ? "active" : ""} onClick={() => goTo("search")}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M16 16l4.2 4.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          Zoek
+        </button>
+      </nav>
     </div>
   );
 }

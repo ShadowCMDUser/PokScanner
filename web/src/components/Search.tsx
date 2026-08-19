@@ -12,6 +12,7 @@ export function Search({ lang, onAdd }: Props) {
   const [cards, setCards] = useState<TcgdexCard[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
 
   async function runSearch(event: FormEvent) {
     event.preventDefault();
@@ -27,16 +28,17 @@ export function Search({ lang, onAdd }: Props) {
   }
 
   return (
-    <section>
+    <section className="stack">
       <form className="search-bar" onSubmit={(event) => void runSearch(event)}>
         <input
           className="field"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Zoek op naam, bijvoorbeeld Charizard"
+          placeholder="Charizard, Pikachu..."
+          enterKeyHint="search"
         />
         <button className="btn primary" disabled={busy || query.trim().length < 2}>
-          {busy ? "Zoeken..." : "Zoek"}
+          {busy ? "..." : "Zoek"}
         </button>
       </form>
 
@@ -45,15 +47,22 @@ export function Search({ lang, onAdd }: Props) {
       <div className="grid">
         {cards.map((card) => (
           <article className="card-tile" key={card.id}>
-            {card.image && <img src={cardArt(card.image)} alt={card.name} />}
-            <h3>{card.name}</h3>
-            <p className="muted">
-              {card.set?.name} · #{card.localId}
-            </p>
-            <p className="price">{formatEur(trendPrice(card))}</p>
-            <button className="btn primary" onClick={() => void onAdd(card, "nm")}>
-              Voeg toe
-            </button>
+            {card.image && <img src={cardArt(card.image, "low")} alt="" />}
+            <div className="tile-info">
+              <h3>{card.name}</h3>
+              <p className="muted">
+                {card.set?.name} · #{card.localId}
+              </p>
+              <p className="price">{formatEur(trendPrice(card))}</p>
+              <button
+                className="btn primary btn-sm"
+                onClick={() => {
+                  void onAdd(card, "nm").then(() => setAdded(card.id));
+                }}
+              >
+                {added === card.id ? "Toegevoegd" : "Voeg toe"}
+              </button>
+            </div>
           </article>
         ))}
       </div>

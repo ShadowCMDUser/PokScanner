@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchCollection, formatEur, removeCard, updateCard } from "../api";
+import { PokeballIcon } from "./Pokeball";
 import type { CollectionResponse } from "../types";
 
 export function Collection() {
@@ -20,65 +21,78 @@ export function Collection() {
   }, []);
 
   if (error) return <div className="error">{error}</div>;
-  if (!data) return <div className="scan-status">Collectie laden...</div>;
+  if (!data) {
+    return (
+      <div className="scan-status">
+        <PokeballIcon className="pokeball" spin />
+        Collectie laden...
+      </div>
+    );
+  }
 
   return (
-    <section>
+    <section className="stack">
       <div className="stats">
         <div className="stat">
-          <span className="muted">Unieke kaarten</span>
+          <span className="muted">Uniek</span>
           <strong>{data.stats.unique}</strong>
         </div>
         <div className="stat">
-          <span className="muted">Totaal stuks</span>
+          <span className="muted">Stuks</span>
           <strong>{data.stats.totalCards}</strong>
         </div>
         <div className="stat">
-          <span className="muted">Geschatte waarde</span>
+          <span className="muted">Waarde</span>
           <strong>{formatEur(data.stats.totalValue)}</strong>
         </div>
       </div>
 
       {data.cards.length === 0 ? (
-        <p className="muted">Nog geen kaarten. Scan je eerste kaart om te beginnen.</p>
+        <div className="empty">
+          <PokeballIcon className="pokeball login-ball" />
+          <p className="muted">Nog geen kaarten. Ga scannen.</p>
+        </div>
       ) : (
         <div className="grid">
           {data.cards.map((card) => (
             <article className="card-tile" key={card.id}>
-              {card.image && <img src={card.image} alt={card.name} />}
-              <h3>{card.name}</h3>
-              <p className="muted">
-                {card.setName} · #{card.localId}
-              </p>
-              <p className="price">{formatEur(card.priceEur)}</p>
-              <div className="qty">
-                <button
-                  onClick={() => {
-                    void updateCard(card.id, { quantity: card.quantity - 1 }).then(load);
-                  }}
-                  disabled={card.quantity <= 1}
-                >
-                  -
-                </button>
-                <span>
-                  {card.quantity}× {card.condition.toUpperCase()}
-                </span>
-                <button
-                  onClick={() => {
-                    void updateCard(card.id, { quantity: card.quantity + 1 }).then(load);
-                  }}
-                >
-                  +
-                </button>
-              </div>
               <button
-                className="btn ghost"
+                className="tile-x"
+                aria-label="Verwijder"
                 onClick={() => {
                   void removeCard(card.id).then(load);
                 }}
               >
-                Verwijder
+                ×
               </button>
+              {card.image && <img src={card.image} alt="" />}
+              <div className="tile-info">
+                <h3>{card.name}</h3>
+                <p className="muted">
+                  {card.setName} · #{card.localId}
+                </p>
+                <p className="price">{formatEur(card.priceEur)}</p>
+                <div className="qty">
+                  <button
+                    onClick={() => {
+                      void updateCard(card.id, { quantity: card.quantity - 1 }).then(load);
+                    }}
+                    disabled={card.quantity <= 1}
+                  >
+                    −
+                  </button>
+                  <span>
+                    {card.quantity}× {card.condition.toUpperCase()}
+                  </span>
+                  <button
+                    onClick={() => {
+                      void updateCard(card.id, { quantity: card.quantity + 1 }).then(load);
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
             </article>
           ))}
         </div>

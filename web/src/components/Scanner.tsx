@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { cardArt, formatEur, scanCard, trendPrice } from "../api";
+import { PokeballIcon } from "./Pokeball";
 import type { CardCondition, Lang, ScanResponse, TcgdexCard } from "../types";
 
 const CONDITIONS: { id: CardCondition; label: string }[] = [
   { id: "mint", label: "Mint" },
-  { id: "nm", label: "Near Mint" },
-  { id: "lp", label: "Light Play" },
-  { id: "mp", label: "Moderate Play" },
-  { id: "hp", label: "Heavily Played" },
-  { id: "dmg", label: "Damaged" },
+  { id: "nm", label: "NM" },
+  { id: "lp", label: "LP" },
+  { id: "mp", label: "MP" },
+  { id: "hp", label: "HP" },
+  { id: "dmg", label: "DMG" },
 ];
 
 type Props = {
@@ -16,21 +17,148 @@ type Props = {
   onAdd: (card: TcgdexCard, condition: CardCondition) => Promise<void>;
 };
 
+type Bounds = { x: number; y: number; w: number; h: number };
+
+function drawVideo(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+  crop?: Bounds,
+) {
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  if (crop) {
+    ctx.drawImage(
+      video,
+      video.videoWidth * crop.x,
+      video.videoHeight * crop.y,
+      video.videoWidth * crop.w,
+      video.videoHeight * crop.h,
+      0,
+      0,
+      width,
+      height,
+    );
+  } else {
+    ctx.drawImage(video, 0, 0, width, height);
+  }
+  return ctx;
+}
+
+function grayAt(data: Uint8ClampedArray, w: number, x: number, y: number) {
+  const i = (y * w + x) * 4;
+  return data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
+}
+
+function findCard(ctx: CanvasRenderingContext2D, w: number, h: number): Bounds | null {
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const mag = new Float32Array(w * h);
+  let maxMag = 0;
+
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < w - 1; x += 1) {
+      const gx = grayAt(data, w, x + 1, y) - grayAt(data, w, x - 1, y);
+      const gy = grayAt(data, w, x, y + 1) - grayAt(data, w, x, y - 1);
+      const value = Math.abs(gx) + Math.abs(gy);
+      mag[y * w + x] = value;
+      if (value > maxMag) maxMag = value;
+    }
+  }
+
+  if (maxMag < 28) return null;
+
+  const thresh = maxMag * 0.22;
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  let hits = 0;
+
+  for (let y = 2; y < h - 2; y += 1) {
+    for (let x = 2; x < w - 2; x += 1) {
+      if (mag[y * w + x] < thresh) continue;
+      hits += 1;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  const boxW = maxX - minX;
+  const boxH = maxY - minY;
+  if (hits < 40 || boxW < w * 0.22 || boxH < h * 0.22) return null;
+
+  const padX = boxW * 0.08;
+  const padY = boxH * 0.06;
+  const x = Math.max(0, minX - padX) / w;
+  const y = Math.max(0, minY - padY) / h;
+  const right = Math.min(w, maxX + padX) / w;
+  const bottom = Math.min(h, maxY + padY) / h;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+function frameStats(ctx: CanvasRenderingContext2D, w: number, h: number, prev: Uint8ClampedArray | null) {
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const count = w * h;
+  const next = new Uint8ClampedArray(count);
+  let sum = 0;
+  let sumSq = 0;
+  let motion = 0;
+
+  for (let i = 0; i < count; i += 1) {
+    const p = i * 4;
+    const gray = data[p] * 0.3 + data[p + 1] * 0.59 + data[p + 2] * 0.11;
+    next[i] = gray;
+    sum += gray;
+    sumSq += gray * gray;
+    if (prev) motion += Math.abs(gray - prev[i]);
+  }
+
+  return {
+    variance: sumSq / count - (sum / count) ** 2,
+    motion: prev ? motion / count : 999,
+    next,
+  };
+}
+
+function toBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((value) => resolve(value), "image/jpeg", 0.84);
+  });
+}
+
 export function Scanner({ lang, onAdd }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const langRef = useRef(lang);
+  const busyRef = useRef(false);
+  const cooldownRef = useRef(0);
+  const prevFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const stableRef = useRef(0);
+  const sampleCanvas = useRef<HTMLCanvasElement | null>(null);
+  const captureCanvas = useRef<HTMLCanvasElement | null>(null);
+
   const [streamReady, setStreamReady] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [camTick, setCamTick] = useState(0);
+  const [hint, setHint] = useState("Houd je kaart in beeld");
+  const [scanning, setScanning] = useState(false);
+  const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [condition, setCondition] = useState<CardCondition>("nm");
   const [saved, setSaved] = useState(false);
 
+  langRef.current = lang;
+
   useEffect(() => {
     let stream: MediaStream | undefined;
+    let cancelled = false;
     const video = videoRef.current;
+    setNeedsCamera(false);
+    setStreamReady(false);
 
     navigator.mediaDevices
       .getUserMedia({
@@ -38,6 +166,10 @@ export function Scanner({ lang, onAdd }: Props) {
         audio: false,
       })
       .then((media) => {
+        if (cancelled) {
+          media.getTracks().forEach((track) => track.stop());
+          return;
+        }
         stream = media;
         if (video) {
           video.srcObject = media;
@@ -46,48 +178,103 @@ export function Scanner({ lang, onAdd }: Props) {
         }
       })
       .catch(() => {
-        setError("Camera niet beschikbaar. Je kan ook een foto uploaden.");
+        if (!cancelled) setNeedsCamera(true);
       });
 
     return () => {
+      cancelled = true;
       stream?.getTracks().forEach((track) => track.stop());
     };
-  }, []);
+  }, [camTick]);
 
-  async function runScan(blob: Blob, previewUrl: string) {
-    setPreview(previewUrl);
-    setBusy(true);
-    setError(null);
+  useEffect(() => {
+    if (!streamReady || result) return;
+
+    sampleCanvas.current ??= document.createElement("canvas");
+    captureCanvas.current ??= document.createElement("canvas");
+
+    const timer = window.setInterval(() => {
+      if (busyRef.current || Date.now() < cooldownRef.current) return;
+
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || !video.videoWidth) return;
+
+      const sample = sampleCanvas.current!;
+      const ctx = drawVideo(video, sample, 90, 160);
+      if (!ctx) return;
+
+      const stats = frameStats(ctx, 90, 160, prevFrameRef.current);
+      prevFrameRef.current = stats.next;
+
+      if (stats.variance < 280) {
+        stableRef.current = 0;
+        setHint("Houd je kaart in beeld");
+        return;
+      }
+      if (stats.motion > 16) {
+        stableRef.current = 0;
+        setHint("Houd even stil...");
+        return;
+      }
+
+      const card = findCard(ctx, 90, 160);
+      if (!card) {
+        stableRef.current = 0;
+        setHint("Houd je kaart in beeld");
+        return;
+      }
+
+      stableRef.current += 1;
+      if (stableRef.current < 2) {
+        setHint("Kaart gezien...");
+        return;
+      }
+
+      busyRef.current = true;
+      setScanning(true);
+      setHint("Kaart herkennen...");
+
+      const capture = captureCanvas.current!;
+      const width = Math.min(900, Math.round(video.videoWidth * card.w));
+      const height = Math.max(120, Math.round(width * (card.h / Math.max(card.w, 0.01))));
+      drawVideo(video, capture, width, height, card);
+
+      void toBlob(capture)
+        .then(async (blob) => {
+          if (!blob) return;
+          const scan = await scanCard(blob, langRef.current);
+          const best = scan.bestMatch;
+          if (best && best.score >= 40 && scan.ocr.nameCandidates.length > 0) {
+            setResult(scan);
+            setSelectedId(best.card.id);
+            setHint(null);
+            return;
+          }
+          cooldownRef.current = Date.now() + 650;
+          setHint("Nog geen match, houd de kaart stil...");
+        })
+        .catch(() => {
+          cooldownRef.current = Date.now() + 900;
+          setHint("Opnieuw proberen...");
+        })
+        .finally(() => {
+          busyRef.current = false;
+          setScanning(false);
+          stableRef.current = 0;
+        });
+    }, 400);
+
+    return () => window.clearInterval(timer);
+  }, [streamReady, result]);
+
+  function reset() {
+    setResult(null);
     setSaved(false);
-    try {
-      const scan = await scanCard(blob, lang);
-      setResult(scan);
-      setSelectedId(scan.bestMatch?.card.id ?? scan.matches[0]?.card.id ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Scan mislukt");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function capture() {
-    const video = videoRef.current;
-    if (!video) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((value) => resolve(value), "image/jpeg", 0.92);
-    });
-    if (!blob) return;
-    await runScan(blob, URL.createObjectURL(blob));
-  }
-
-  async function onFile(file: File) {
-    await runScan(file, URL.createObjectURL(file));
+    setSelectedId(null);
+    setHint("Houd je kaart in beeld");
+    cooldownRef.current = Date.now() + 800;
+    prevFrameRef.current = null;
+    stableRef.current = 0;
   }
 
   const selected =
@@ -96,128 +283,69 @@ export function Scanner({ lang, onAdd }: Props) {
     null;
 
   return (
-    <section className="hero">
-      <div>
-        <div className="viewfinder">
-          {preview ? (
-            <img className="preview" src={preview} alt="Gescande kaart" />
-          ) : (
-            <>
-              <video ref={videoRef} playsInline muted />
-              <div className="frame" />
-            </>
-          )}
-        </div>
-        <div className="controls">
-          <button className="btn primary" onClick={() => void capture()} disabled={!streamReady || busy}>
-            Scan kaart
-          </button>
-          <button className="btn ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
-            Upload foto
-          </button>
-          {preview && (
-            <button
-              className="btn ghost"
-              onClick={() => {
-                setPreview(null);
-                setResult(null);
-                setSaved(false);
-              }}
-            >
-              Opnieuw
+    <section className="scanner">
+      <div className={`viewfinder${needsCamera ? " needs-cam" : ""}`}>
+        <video ref={videoRef} playsInline muted autoPlay />
+        <div className="vignette" />
+
+        {needsCamera && (
+          <div className="cam-empty">
+            <PokeballIcon className="login-ball" />
+            <h2>Camera aanzetten</h2>
+            <p className="muted">PokScanner heeft je camera nodig om kaarten te herkennen.</p>
+            <button className="btn primary" onClick={() => setCamTick((tick) => tick + 1)}>
+              Toegang geven
             </button>
-          )}
-          <input
-            ref={fileRef}
-            className="hidden-input"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void onFile(file);
-            }}
-          />
-        </div>
-      </div>
-
-      <div className="side">
-        <div>
-          <h2>Resultaat</h2>
-          <p className="muted">
-            OCR leest naam en nummer, daarna zoeken we de kaart in de TCGdex-catalogus.
-          </p>
-        </div>
-
-        {busy && (
-          <div className="scan-status">
-            <div className="spin" />
-            Kaart herkennen...
           </div>
         )}
 
-        {error && <div className="error">{error}</div>}
+        {!result && !needsCamera && hint && (
+          <div className="scan-hint">
+            <PokeballIcon className="hint-ball" spin={scanning} />
+            {hint}
+          </div>
+        )}
+      </div>
 
-        {result && selected && (
-          <>
+      {result && selected && (
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <div className="sheet-head">
             {selected.image && (
-              <img className="result-art" src={cardArt(selected.image)} alt={selected.name} />
+              <img className="sheet-art" src={cardArt(selected.image, "low")} alt="" />
             )}
-            <div className="meta">
+            <div className="sheet-meta">
               <strong>{selected.name}</strong>
               <span className="muted">
                 {selected.set?.name} · #{selected.localId}
-                {selected.rarity ? ` · ${selected.rarity}` : ""}
               </span>
-              <div className="types">
-                {(selected.types ?? []).map((type) => (
-                  <span className="chip" key={type}>
-                    {type}
-                  </span>
-                ))}
-              </div>
-              <div className="price">{formatEur(trendPrice(selected))}</div>
-              <span className="muted">Cardmarket trendprijs</span>
+              <span className="price">{formatEur(trendPrice(selected))}</span>
             </div>
+            <button className="btn ghost btn-sm" onClick={reset}>
+              Opnieuw
+            </button>
+          </div>
 
-            {result.ocr.nameCandidates.length > 0 && (
-              <p className="muted">
-                OCR: {result.ocr.nameCandidates[0]}
-                {result.ocr.collectorNumber
-                  ? ` · ${result.ocr.collectorNumber}${result.ocr.setTotal ? `/${result.ocr.setTotal}` : ""}`
-                  : ""}
-              </p>
-            )}
+          {result.matches.length > 1 && (
+            <div className="match-row">
+              {result.matches.map((match) => (
+                <button
+                  key={match.card.id}
+                  className={`match-pill ${match.card.id === selected.id ? "selected" : ""}`}
+                  onClick={() => setSelectedId(match.card.id)}
+                >
+                  {match.card.name}
+                  <span>{match.score}%</span>
+                </button>
+              ))}
+            </div>
+          )}
 
-            {result.matches.length > 1 && (
-              <div className="matches">
-                {result.matches.map((match) => (
-                  <button
-                    key={match.card.id}
-                    className={`match-card ${match.card.id === selected.id ? "selected" : ""}`}
-                    onClick={() => setSelectedId(match.card.id)}
-                  >
-                    <img src={cardArt(match.card.image, "low")} alt="" />
-                    <span>
-                      <strong>{match.card.name}</strong>
-                      <br />
-                      <span className="muted">
-                        {match.card.set?.name} · {match.score}%
-                      </span>
-                    </span>
-                    <span className="chip">{match.reasons[0] ?? "match"}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <label className="muted" htmlFor="condition">
-              Conditie
-            </label>
+          <div className="sheet-actions">
             <select
-              id="condition"
               value={condition}
               onChange={(event) => setCondition(event.target.value as CardCondition)}
+              aria-label="Conditie"
             >
               {CONDITIONS.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -225,7 +353,6 @@ export function Scanner({ lang, onAdd }: Props) {
                 </option>
               ))}
             </select>
-
             <button
               className="btn primary"
               disabled={saved}
@@ -233,18 +360,11 @@ export function Scanner({ lang, onAdd }: Props) {
                 void onAdd(selected, condition).then(() => setSaved(true));
               }}
             >
-              {saved ? "Toegevoegd aan collectie" : "Zet in collectie"}
+              {saved ? "Toegevoegd" : "In collectie"}
             </button>
-          </>
-        )}
-
-        {result && !selected && !busy && (
-          <div className="error">
-            Geen betrouwbare match. Probeer dichterbij, met minder schittering, of zoek de
-            kaart handmatig.
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </section>
   );
 }

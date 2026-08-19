@@ -39,7 +39,14 @@ export function AuthPanel({ onDone }: Props) {
 
   return (
     <div className="auth-panel">
-      <h2>{mode === "login" ? "Inloggen" : "Account maken"}</h2>
+      <div className="seg">
+        <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
+          Account
+        </button>
+        <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
+          Inloggen
+        </button>
+      </div>
       <form className="auth-form" onSubmit={(event) => void submit(event)}>
         {mode === "register" && (
           <input
@@ -66,7 +73,7 @@ export function AuthPanel({ onDone }: Props) {
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="Wachtwoord (min. 8 tekens)"
+          placeholder="Wachtwoord (min. 8)"
           autoComplete={mode === "login" ? "current-password" : "new-password"}
           minLength={8}
           required
@@ -76,14 +83,6 @@ export function AuthPanel({ onDone }: Props) {
           {busy ? "Even geduld..." : mode === "login" ? "Log in" : "Maak account"}
         </button>
       </form>
-
-      <button
-        className="btn ghost"
-        type="button"
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-      >
-        {mode === "login" ? "Nog geen account? Registreer" : "Al een account? Log in"}
-      </button>
     </div>
   );
 }
