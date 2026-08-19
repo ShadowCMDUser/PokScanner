@@ -280,77 +280,87 @@ export function emptyOcr(): OcrResult {
   };
 }
 
-async function readRegion(image: Buffer | undefined, psm: PSM, whitelist?: string) {
-  if (!image) return { text: "", confidence: 0 };
-  return recognize(image, psm, whitelist);
-}
+export type StampId = {
+  setCode: string | null;
+  collectorNumber: string | null;
+  setTotal: string | null;
+  rawText: string;
+  confidence: number;
+};
 
-export async function readCardText(regions: {
-  full: Buffer;
-  plate?: Buffer;
-  top: Buffer;
-  body?: Buffer;
-  bottom: Buffer;
-  bottomInk?: Buffer;
-  stamp?: Buffer;
-  stampInk?: Buffer;
-  stampInv?: Buffer;
-}): Promise<OcrResult> {
-  const stamp = await readRegion(regions.stamp, PSM.SPARSE_TEXT, STAMP_CHARS);
-  const stampInk = await readRegion(regions.stampInk, PSM.SPARSE_TEXT, STAMP_CHARS);
-  const stampInv = await readRegion(regions.stampInv, PSM.SPARSE_TEXT, STAMP_CHARS);
-  let stampText = `${stamp.text}\n${stampInk.text}\n${stampInv.text}`;
-  let collector = extractCollector(stampText);
-  let setCode = extractSetCode(stampText);
+export function extractStampId(text: string): Omit<StampId, "rawText" | "confidence"> {
+  const collector = extractCollector(text);
+  let setCode = extractSetCode(text);
+  let number = collector.number;
+  const compact = tidy(text).toUpperCase().replace(/[^A-Z0-9\/]/g, "");
 
-  if (!collector.number || !setCode) {
-    const stampBlock = await readRegion(regions.stamp, PSM.SINGLE_BLOCK, STAMP_CHARS);
-    stampText = `${stampText}\n${stampBlock.text}`;
-    if (!collector.number) collector = extractCollector(stampText);
-    if (!setCode) setCode = extractSetCode(stampText);
+  if (!setCode) {
+    const promo = tidy(text)
+      .toUpperCase()
+      .match(/\b(SVP|BWP|XYP|SMP|MEP)\s*(?:EN|FR|DE|ES|IT|PT)?\s*(\d{1,3})\b/);
+    if (promo) {
+      setCode = promo[1];
+      number = String(Number(digits(promo[2])) || promo[2]);
+    }
   }
 
-  let bottom = { text: "", confidence: 0 };
-  let bottomInk = { text: "", confidence: 0 };
-  if (!collector.number || !setCode) {
-    bottom = await readRegion(regions.bottom, PSM.SPARSE_TEXT, NUMBER_CHARS);
-    bottomInk = await readRegion(regions.bottomInk, PSM.SPARSE_TEXT, NUMBER_CHARS);
-    const footer = `${stampText}\n${bottom.text}\n${bottomInk.text}`;
-    if (!collector.number) collector = extractCollector(footer);
-    if (!setCode) setCode = extractSetCode(footer);
+  if (setCode && !number) {
+    const after = compact.match(
+      new RegExp(`${setCode}(?:EN|FR|DE|ES|IT|PT|NL|JP)?([A-Z]{0,3}\\d{1,3})(?:\\/(\\d{2,4}))?`),
+    );
+    if (after?.[1]) {
+      const local = after[1].replace(/^[A-Z]+/, "") || after[1];
+      const n = Number(digits(local));
+      if (Number.isFinite(n) && n >= 1) number = String(n);
+      else number = after[1];
+    }
   }
-
-  const plate = await readRegion(regions.plate, PSM.SINGLE_LINE, NAME_CHARS);
-  const top = await readRegion(regions.top, PSM.SINGLE_BLOCK, `${NAME_CHARS}0123456789`);
-  let body = { text: "", confidence: 0 };
-  let full = { text: "", confidence: 0 };
-  if (!collector.number && !setCode) {
-    body = await readRegion(regions.body, PSM.SPARSE_TEXT);
-    full = await readRegion(regions.full, PSM.SPARSE_TEXT);
-    const dump = `${stampText}\n${bottom.text}\n${bottomInk.text}\n${full.text}\n${body.text}`;
-    if (!collector.number) collector = extractCollector(dump);
-    if (!setCode) setCode = extractSetCode(dump);
-  }
-
-  const combined = [plate.text, top.text, body.text, full.text, stampText, bottom.text, bottomInk.text]
-    .filter(Boolean)
-    .join("\n");
-  const evolvesFrom = extractEvolvesFrom(combined);
-  const names = extractNames(`${plate.text}\n${top.text}`, top.text, `${plate.text}\n${top.text}`, evolvesFrom);
 
   return {
-    rawText: combined.replace(/\n{2,}/g, "\n").trim(),
-    nameCandidates: names,
-    evolvesFrom,
-    hp: extractHp(`${plate.text}\n${top.text}`),
-    collectorNumber: collector.number,
     setCode,
+    collectorNumber: number,
     setTotal: collector.total,
-    illustrator: extractIllustrator(combined),
-    stage: extractStage(`${plate.text}\n${top.text}`),
-    regulationMark: extractRegulation(stampText),
-    ability: extractAbility(body.text),
-    attacks: extractAttacks(body.text),
-    confidence: Math.round((stamp.confidence + plate.confidence + top.confidence) / 3),
   };
+}
+
+function mergeStamp(into: StampId, text: string, confidence: number) {
+  const parsed = extractStampId(text);
+  if (!into.setCode && parsed.setCode) into.setCode = parsed.setCode;
+  if (!into.collectorNumber && parsed.collectorNumber) into.collectorNumber = parsed.collectorNumber;
+  if (!into.setTotal && parsed.setTotal) into.setTotal = parsed.setTotal;
+  if (text.trim()) into.rawText = [into.rawText, text].filter(Boolean).join("\n");
+  into.confidence = Math.max(into.confidence, confidence);
+}
+
+export async function readStamp(regions: {
+  contrast: Buffer;
+  ink: Buffer;
+  inv: Buffer;
+  wide: Buffer;
+  wideInk: Buffer;
+}): Promise<StampId> {
+  const stamp: StampId = {
+    setCode: null,
+    collectorNumber: null,
+    setTotal: null,
+    rawText: "",
+    confidence: 0,
+  };
+
+  const passes: { image: Buffer; psm: PSM }[] = [
+    { image: regions.contrast, psm: PSM.SPARSE_TEXT },
+    { image: regions.inv, psm: PSM.SPARSE_TEXT },
+    { image: regions.ink, psm: PSM.SPARSE_TEXT },
+    { image: regions.contrast, psm: PSM.SINGLE_BLOCK },
+    { image: regions.wide, psm: PSM.SPARSE_TEXT },
+    { image: regions.wideInk, psm: PSM.SPARSE_TEXT },
+  ];
+
+  for (const pass of passes) {
+    const result = await recognize(pass.image, pass.psm, STAMP_CHARS);
+    mergeStamp(stamp, result.text, result.confidence);
+    if (stamp.setCode && stamp.collectorNumber) break;
+  }
+
+  return stamp;
 }

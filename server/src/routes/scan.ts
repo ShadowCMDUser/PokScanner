@@ -1,11 +1,8 @@
 import { Router } from "express";
 import multer from "multer";
-import { prepareForOcr } from "../services/image.js";
-import { lookupCard } from "../services/lookup.js";
-import { matchCard } from "../services/match.js";
-import { readCardText } from "../services/ocr.js";
-import { setIdForCode } from "../services/setCodes.js";
-import { differenceHash, symbolHash } from "../services/vision.js";
+import { prepareStamp } from "../services/image.js";
+import { lookupStamp } from "../services/lookup.js";
+import { readStamp } from "../services/ocr.js";
 import { flattenCard } from "../services/warp.js";
 
 const upload = multer({
@@ -32,56 +29,19 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
 
     const lang = typeof req.body?.lang === "string" ? req.body.lang : "en";
     const flattened = await flattenCard(fileBuffer);
-    const regions = await prepareForOcr(flattened);
-    const ocr = await readCardText(regions);
-    const [artHash, cardHash, markHash] = await Promise.all([
-      differenceHash(regions.art),
-      differenceHash(regions.card),
-      symbolHash(regions.symbol),
-    ]);
-    const extra = await lookupCard(ocr, lang);
-    const stampHits = extra.filter((card) => {
-      if (!ocr.setCode || !ocr.collectorNumber) return false;
-      const setId = setIdForCode(ocr.setCode);
-      const sameNumber =
-        card.localId.replace(/^0+/, "").toLowerCase() ===
-        ocr.collectorNumber.replace(/^0+/, "").toLowerCase();
-      return Boolean(setId && card.set?.id === setId && sameNumber);
-    });
-
-    let matches = stampHits.length
-      ? stampHits.slice(0, 8).map((card) => ({
-          card,
-          score: 90,
-          reasons: ["setcode+nummer"],
-        }))
-      : await matchCard(
-          ocr,
-          lang,
-          {
-            artHash,
-            cardHash,
-            symbolHash: markHash,
-            queryImage: regions.card,
-            foil: false,
-          },
-          extra,
-        );
-
-    if (!matches.length && extra.length) {
-      matches = extra.slice(0, 8).map((card) => ({
-        card,
-        score: 20,
-        reasons: ["catalogus"],
-      }));
-    }
+    const regions = await prepareStamp(flattened);
+    const stamp = await readStamp(regions);
+    const cards = await lookupStamp(stamp, lang);
+    const matches = cards.slice(0, 12).map((card, index) => ({
+      card,
+      score: stamp.setCode ? 100 : Math.max(20, 80 - index),
+      reasons: stamp.setCode ? ["nummerblok"] : ["nummer"],
+    }));
 
     console.log("scan", {
-      setCode: ocr.setCode,
-      number: ocr.collectorNumber,
-      total: ocr.setTotal,
-      names: ocr.nameCandidates.slice(0, 3),
-      extra: extra.map((card) => card.id).slice(0, 8),
+      setCode: stamp.setCode,
+      number: stamp.collectorNumber,
+      total: stamp.setTotal,
       matches: matches.map((match) => match.card.id).slice(0, 5),
     });
 
