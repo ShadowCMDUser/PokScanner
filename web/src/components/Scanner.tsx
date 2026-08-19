@@ -30,7 +30,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Leg de kaart vlak in beeld en tik op de pokéball");
+  const [hint, setHint] = useState<string | null>("Donkere achtergrond, kaart in het kader, dan tikken");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -91,14 +91,14 @@ export function Scanner({ lang, onAdd }: Props) {
     ctx.drawImage(video, 0, 0);
 
     setScanning(true);
-    setHint("YOLO + CLIP herkennen de kaart...");
+    setHint("Kaart rechtzetten en herkennen...");
 
     try {
       const blob = await toBlob(canvas);
       if (!blob) throw new Error("Kon geen foto maken");
       const scan = await scanCard(blob, langRef.current);
       if (!scan.matches.length || !scan.bestMatch) {
-        setHint("Geen match boven 70%. Houd de kaart stil, vullend in beeld.");
+        setHint("Geen duidelijke match. Kaart stiller en rechter in het kader.");
         return;
       }
       setResult(scan);
@@ -122,7 +122,7 @@ export function Scanner({ lang, onAdd }: Props) {
     setResult(null);
     setSaved(false);
     setSelectedId(null);
-    setHint("Leg de kaart vlak in beeld en tik op de pokéball");
+    setHint("Donkere achtergrond, kaart in het kader, dan tikken");
   }
 
   const selected =
@@ -135,6 +135,7 @@ export function Scanner({ lang, onAdd }: Props) {
       <div className={`viewfinder${needsCamera ? " needs-cam" : ""}`}>
         <video ref={videoRef} playsInline muted autoPlay />
         <div className="vignette" />
+        {!result && !needsCamera && <div className="card-guide" />}
 
         {needsCamera && (
           <div className="cam-empty">

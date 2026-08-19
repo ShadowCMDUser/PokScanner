@@ -1,5 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
+import { flattenCard } from "../services/warp.js";
 import { scanWithClip } from "../services/clipScan.js";
 
 const upload = multer({
@@ -25,7 +26,8 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
     }
 
     const lang = typeof req.body?.lang === "string" ? req.body.lang : "en";
-    const { ocr, matches } = await scanWithClip(fileBuffer, lang);
+    const flattened = await flattenCard(fileBuffer);
+    const { ocr, matches } = await scanWithClip(flattened, lang);
 
     res.json({
       ocr,

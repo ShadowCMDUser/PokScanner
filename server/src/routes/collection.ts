@@ -6,7 +6,8 @@ import {
   updateCollectionEntry,
 } from "../db.js";
 import { getUserId, requireUser } from "../middleware/requireUser.js";
-import { getCard, normalizeLang } from "../services/tcgdex.js";
+import { getCardOrNull, normalizeLang } from "../services/tcgdex.js";
+import { catalogIdCandidates } from "../services/clipScan.js";
 import type { CardCondition } from "../types.js";
 
 const CONDITIONS: CardCondition[] = ["mint", "nm", "lp", "mp", "hp", "dmg"];
@@ -45,7 +46,15 @@ collectionRouter.post("/", async (req, res) => {
       ? (req.body.condition as CardCondition)
       : "nm";
     const quantity = Number(req.body?.quantity ?? 1);
-    const card = await getCard(cardId, lang);
+    let card = null;
+    for (const id of catalogIdCandidates(cardId)) {
+      card = await getCardOrNull(id, lang);
+      if (card) break;
+    }
+    if (!card) {
+      res.status(404).json({ error: "Kaart niet gevonden in de catalogus" });
+      return;
+    }
     const entry = addToCollection(getUserId(res), card, { condition, quantity });
     res.status(201).json(entry);
   } catch (error) {

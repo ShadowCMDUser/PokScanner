@@ -8,7 +8,7 @@ import {
 
 const SCANNER_API =
   process.env.SCANNER_API_URL ?? "https://shreyshingala-pokemon-scanner-api.hf.space";
-const MIN_SIMILARITY = 0.7;
+const MIN_SIMILARITY = 0.5;
 
 type ClipMatch = {
   rank?: number;
@@ -91,6 +91,12 @@ function idCandidates(set: string, number: string) {
   return unique(ids);
 }
 
+export function catalogIdCandidates(id: string) {
+  const idx = id.lastIndexOf("-");
+  if (idx < 1) return [id];
+  return unique([id, ...idCandidates(id.slice(0, idx), id.slice(idx + 1))]);
+}
+
 export function parseClipFilename(filename: string) {
   const clean = filename.replace(/\.(jpe?g|png|webp)$/i, "");
   const parts = clean.split("_").filter(Boolean);
@@ -147,10 +153,10 @@ async function resolveTcgdexCard(
   const found = await Promise.all(
     idCandidates(parsed.set, parsed.number).map(async (id) => getCardOrNull(id, lang)),
   );
-  const exact = found.find(
-    (card) => card && namesAlign(card.name, parsed.name),
-  );
-  if (exact) return exact;
+  const named = found.find((card) => card && namesAlign(card.name, parsed.name));
+  if (named) return named;
+  const any = found.find((card) => Boolean(card));
+  if (any) return any;
 
   const localId = parsed.number.replace(/^0+/, "") || parsed.number;
   const briefs = await searchCards(lang, {
@@ -169,19 +175,20 @@ async function resolveMatch(
   parsed: NonNullable<ReturnType<typeof parseClipFilename>>,
   lang: TcgLang,
 ) {
-  const [poke, tcgdex] = await Promise.all([
-    fetchPokeTcg(parsed.pokeId),
-    resolveTcgdexCard(parsed, lang),
-  ]);
+  const poke = await fetchPokeTcg(parsed.pokeId);
+  const tcgdex = await resolveTcgdexCard(parsed, lang);
 
-  if (tcgdex) {
+  if (poke && tcgdex) {
     return {
       ...tcgdex,
-      image: poke?.images?.large ?? poke?.images?.small ?? tcgdex.image,
+      name: poke.name,
+      localId: poke.number,
+      image: poke.images?.large ?? poke.images?.small ?? tcgdex.image,
+      rarity: poke.rarity ?? tcgdex.rarity,
     } satisfies TcgdexCard;
   }
   if (poke) return toCardFromPoke(poke);
-  return null;
+  return tcgdex;
 }
 
 export async function wakeupScanner() {
@@ -208,13 +215,17 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
     throw new Error(payload.error || `Scanner gaf ${response.status} terug`);
   }
 
+  const bestName = payload.best_match?.card_name;
   const rawMatches = [payload.best_match, ...(payload.top_matches ?? [])].filter(
-    (match): match is ClipMatch => Boolean(match?.card_name),
+    (match): match is ClipMatch => {
+      if (!match?.card_name) return false;
+      return match.card_name === bestName || (match.similarity ?? 0) >= MIN_SIMILARITY;
+    },
   );
 
   const seen = new Set<string>();
-  const parsed = rawMatches.flatMap((match) => {
-    if ((match.similarity ?? 0) < MIN_SIMILARITY) return [];
+  const parsed = rawMatches.flatMap((match, index) => {
+    if (index > 0 && (match.similarity ?? 0) < MIN_SIMILARITY) return [];
     const info = parseClipFilename(match.card_name);
     if (!info || seen.has(info.pokeId)) return [];
     seen.add(info.pokeId);
@@ -223,7 +234,7 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
 
   const ocrName = payload.card_info?.name ?? parsed[0]?.info.name ?? "";
   const resolved = await Promise.all(
-    parsed.slice(0, 8).map(async ({ info, similarity }) => {
+    parsed.slice(0, 5).map(async ({ info, similarity }) => {
       const card = await resolveMatch(info, lang);
       if (!card) return null;
       const score = Math.round(similarity * 100);
@@ -235,14 +246,7 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
     }),
   );
 
-  let matches = resolved.filter((match): match is ScoredMatch => Boolean(match));
-  if (ocrName) {
-    const named = matches.filter((match) => namesAlign(match.card.name, ocrName));
-    if (named.length) {
-      const rest = matches.filter((match) => !named.includes(match));
-      matches = [...named, ...rest];
-    }
-  }
+  const matches = resolved.filter((match): match is ScoredMatch => Boolean(match));
 
   const hpValue = Number(payload.card_info?.hp);
   const ocr: OcrResult = {

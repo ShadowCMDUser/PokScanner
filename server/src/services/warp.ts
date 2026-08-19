@@ -1,0 +1,281 @@
+import sharp from "sharp";
+
+const CARD_W = 660;
+const CARD_H = 880;
+type Point = { x: number; y: number };
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function convexHull(points: Point[]) {
+  const pts = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  if (pts.length <= 3) return pts;
+
+  const cross = (o: Point, a: Point, b: Point) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+  const lower: Point[] = [];
+  for (const point of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper: Point[] = [];
+  for (let i = pts.length - 1; i >= 0; i -= 1) {
+    const point = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function toQuad(hull: Point[]) {
+  if (hull.length < 4) return null;
+  const pts = hull.map((point) => ({ ...point }));
+  while (pts.length > 4) {
+    let drop = 0;
+    let smallest = Infinity;
+    for (let i = 0; i < pts.length; i += 1) {
+      const prev = pts[(i + pts.length - 1) % pts.length];
+      const next = pts[(i + 1) % pts.length];
+      const area = Math.abs(
+        (pts[i].x - prev.x) * (next.y - prev.y) - (pts[i].y - prev.y) * (next.x - prev.x),
+      );
+      if (area < smallest) {
+        smallest = area;
+        drop = i;
+      }
+    }
+    pts.splice(drop, 1);
+  }
+  return reorder(pts);
+}
+
+function reorder(corners: Point[]) {
+  const sorted = [...corners].sort((a, b) => a.y - b.y);
+  const top = sorted.slice(0, 2).sort((a, b) => a.x - b.x);
+  const bottom = sorted.slice(2).sort((a, b) => a.x - b.x);
+  return [top[0], top[1], bottom[0], bottom[1]];
+}
+
+function largestBlob(mask: Uint8Array, w: number, h: number) {
+  const seen = new Uint8Array(w * h);
+  let best: number[] = [];
+
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < w - 1; x += 1) {
+      const start = y * w + x;
+      if (!mask[start] || seen[start]) continue;
+      const stack = [start];
+      const cells: number[] = [];
+      seen[start] = 1;
+      while (stack.length) {
+        const i = stack.pop()!;
+        cells.push(i);
+        const cx = i % w;
+        const cy = Math.floor(i / w);
+        const next = [
+          [cx - 1, cy],
+          [cx + 1, cy],
+          [cx, cy - 1],
+          [cx, cy + 1],
+        ];
+        for (const [nx, ny] of next) {
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const n = ny * w + nx;
+          if (seen[n] || !mask[n]) continue;
+          seen[n] = 1;
+          stack.push(n);
+        }
+      }
+      if (cells.length > best.length) best = cells;
+    }
+  }
+
+  return best;
+}
+
+function blobCorners(cells: number[], w: number) {
+  const points: Point[] = [];
+  const set = new Set(cells);
+  for (const i of cells) {
+    const x = i % w;
+    const y = Math.floor(i / w);
+    const edge =
+      !set.has(i - 1) || !set.has(i + 1) || !set.has(i - w) || !set.has(i + w);
+    if (edge) points.push({ x, y });
+  }
+  return points;
+}
+
+function solveHomography(src: Point[], dst: Point[]) {
+  const a: number[][] = [];
+  const b: number[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const { x, y } = src[i];
+    const u = dst[i].x;
+    const v = dst[i].y;
+    a.push([u, v, 1, 0, 0, 0, -x * u, -x * v]);
+    b.push(x);
+    a.push([0, 0, 0, u, v, 1, -y * u, -y * v]);
+    b.push(y);
+  }
+
+  const n = 8;
+  const m = a.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col += 1) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row += 1) {
+      if (Math.abs(m[row][col]) > Math.abs(m[pivot][col])) pivot = row;
+    }
+    [m[col], m[pivot]] = [m[pivot], m[col]];
+    const div = m[col][col];
+    if (Math.abs(div) < 1e-8) return null;
+    for (let j = col; j <= n; j += 1) m[col][j] /= div;
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = m[row][col];
+      for (let j = col; j <= n; j += 1) m[row][j] -= factor * m[col][j];
+    }
+  }
+  return m.map((row) => row[n]);
+}
+
+function sample(data: Buffer, w: number, h: number, x: number, y: number) {
+  const x0 = clamp(Math.floor(x), 0, w - 2);
+  const y0 = clamp(Math.floor(y), 0, h - 2);
+  const dx = clamp(x - x0, 0, 1);
+  const dy = clamp(y - y0, 0, 1);
+  const idx = (px: number, py: number) => (py * w + px) * 3;
+  const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+  const out = [0, 0, 0];
+  for (let c = 0; c < 3; c += 1) {
+    const p00 = data[idx(x0, y0) + c];
+    const p10 = data[idx(x0 + 1, y0) + c];
+    const p01 = data[idx(x0, y0 + 1) + c];
+    const p11 = data[idx(x0 + 1, y0 + 1) + c];
+    out[c] = mix(mix(p00, p10, dx), mix(p01, p11, dx), dy);
+  }
+  return out;
+}
+
+async function findQuad(gray: Buffer, w: number, h: number) {
+  const mag = new Float32Array(w * h);
+  let maxMag = 0;
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < w - 1; x += 1) {
+      const gx = gray[y * w + x + 1] - gray[y * w + x - 1];
+      const gy = gray[(y + 1) * w + x] - gray[(y - 1) * w + x];
+      const value = Math.abs(gx) + Math.abs(gy);
+      mag[y * w + x] = value;
+      if (value > maxMag) maxMag = value;
+    }
+  }
+  if (maxMag < 20) return null;
+
+  const thresh = maxMag * 0.18;
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < mag.length; i += 1) {
+    if (mag[i] >= thresh) mask[i] = 1;
+  }
+
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < w - 1; x += 1) {
+      if (mask[y * w + x]) continue;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) n += mask[(y + dy) * w + x + dx];
+      }
+      if (n >= 5) mask[y * w + x] = 1;
+    }
+  }
+
+  const blob = largestBlob(mask, w, h);
+  if (blob.length < w * h * 0.08) return null;
+  const hull = convexHull(blobCorners(blob, w));
+  return toQuad(hull);
+}
+
+async function warpToSize(input: Buffer, corners: Point[]) {
+  const { data, info } = await sharp(input).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const h = solveHomography(corners, [
+    { x: 0, y: 0 },
+    { x: CARD_W, y: 0 },
+    { x: 0, y: CARD_H },
+    { x: CARD_W, y: CARD_H },
+  ]);
+  if (!h) return null;
+
+  const out = Buffer.alloc(CARD_W * CARD_H * 3);
+  for (let v = 0; v < CARD_H; v += 1) {
+    for (let u = 0; u < CARD_W; u += 1) {
+      const den = h[6] * u + h[7] * v + 1;
+      const x = (h[0] * u + h[1] * v + h[2]) / den;
+      const y = (h[3] * u + h[4] * v + h[5]) / den;
+      const [r, g, b] = sample(data, info.width, info.height, x, y);
+      const o = (v * CARD_W + u) * 3;
+      out[o] = r;
+      out[o + 1] = g;
+      out[o + 2] = b;
+    }
+  }
+
+  return sharp(out, { raw: { width: CARD_W, height: CARD_H, channels: 3 } })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
+
+export async function flattenCard(input: Buffer) {
+  const source = await sharp(input)
+    .rotate()
+    .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+
+  const meta = await sharp(source).metadata();
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  if (!width || !height) return source;
+
+  const probeW = 320;
+  const probeH = Math.max(160, Math.round((probeW * height) / width));
+  const { data } = await sharp(source)
+    .greyscale()
+    .blur(1.1)
+    .resize(probeW, probeH, { fit: "fill" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const quad = await findQuad(data, probeW, probeH);
+  let card: Buffer | null = null;
+
+  if (quad) {
+    const corners = quad.map((point) => ({
+      x: (point.x / probeW) * width,
+      y: (point.y / probeH) * height,
+    }));
+    card = await warpToSize(source, corners);
+  }
+
+  if (!card) return source;
+
+  return sharp({
+    create: {
+      width: 900,
+      height: 1200,
+      channels: 3,
+      background: { r: 20, g: 20, b: 24 },
+    },
+  })
+    .composite([{ input: card, gravity: "center" }])
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}

@@ -252,13 +252,18 @@ img {
   display: none;
 }
 
-.vignette {
+.card-guide {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 46%;
+  z-index: 2;
+  width: min(72vw, 280px);
+  aspect-ratio: 63 / 88;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
   pointer-events: none;
-  background:
-    radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.28) 100%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, transparent 16%, transparent 62%, rgba(0, 0, 0, 0.62) 100%);
 }
 
 .scan-hint {
