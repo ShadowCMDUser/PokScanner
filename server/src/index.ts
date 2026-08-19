@@ -8,6 +8,7 @@ import { hasWebBuild, webDistDir } from "./paths.js";
 import { collectionRouter } from "./routes/collection.js";
 import { scanRouter } from "./routes/scan.js";
 import { searchRouter } from "./routes/search.js";
+import { wakeupScanner } from "./services/clipScan.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? (process.env.NODE_ENV === "production" ? 3000 : 3001));
@@ -80,4 +81,5 @@ await migrateAuth();
 
 app.listen(port, host, () => {
   console.log(`PokScanner luistert op http://${host}:${port}`);
+  void wakeupScanner();
 });

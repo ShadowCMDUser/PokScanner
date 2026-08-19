@@ -208,16 +208,7 @@ function toBlob(canvas: HTMLCanvasElement) {
 }
 
 function isConfident(scan: ScanResponse) {
-  const best = scan.bestMatch;
-  if (!best) return false;
-  const hasKey =
-    scan.ocr.nameCandidates.length > 0 || Boolean(scan.ocr.evolvesFrom) || Boolean(scan.ocr.collectorNumber);
-  if (!hasKey) return false;
-  const hasArt = best.reasons.some((reason) => reason.startsWith("artwork"));
-  if (hasArt && best.score >= 72) return true;
-  if (best.score >= 88) return true;
-  if (best.score >= 70 && scan.ocr.collectorNumber) return true;
-  return false;
+  return (scan.bestMatch?.score ?? 0) >= 70;
 }
 
 export function Scanner({ lang, onAdd }: Props) {
@@ -233,7 +224,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Houd je kaart stil tegen een donkere achtergrond");
+  const [hint, setHint] = useState<string | null>("Houd je kaart stil in beeld");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -302,7 +293,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
       if (stats.variance < 280) {
         stableRef.current = 0;
-        setHint("Houd je kaart stil tegen een donkere achtergrond");
+        setHint("Houd je kaart stil in beeld");
         return;
       }
       if (stats.motion > 16) {
@@ -314,7 +305,7 @@ export function Scanner({ lang, onAdd }: Props) {
       const card = findCard(ctx, 108, 192);
       if (!card) {
         stableRef.current = 0;
-        setHint("Houd je kaart stil tegen een donkere achtergrond");
+        setHint("Houd je kaart stil in beeld");
         return;
       }
 
@@ -326,47 +317,45 @@ export function Scanner({ lang, onAdd }: Props) {
 
       busyRef.current = true;
       setScanning(true);
-      setHint("Kaart herkennen...");
+      setHint("Kaart herkennen... even geduld");
 
       const capture = captureCanvas.current!;
-      const crop = snapToCard(card, video.videoWidth, video.videoHeight);
-      const width = Math.min(1200, Math.round(video.videoWidth * crop.w));
-      const height = Math.max(220, Math.round(width / CARD_ASPECT));
-      drawVideo(video, capture, width, height, crop);
+      const maxSide = 1280;
+      const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+      drawVideo(
+        video,
+        capture,
+        Math.round(video.videoWidth * scale),
+        Math.round(video.videoHeight * scale),
+      );
 
       void toBlob(capture)
         .then(async (blob) => {
           if (!blob) return;
           const scan = await scanCard(blob, langRef.current);
           const best = scan.bestMatch;
-          if (!best) {
+          if (!best || !scan.matches.length) {
             lastMatchRef.current = null;
-            cooldownRef.current = Date.now() + 500;
-            setHint("Nog geen match, houd de kaart stil...");
+            cooldownRef.current = Date.now() + 1400;
+            setHint("Geen match, houd de kaart vlak in beeld...");
             return;
           }
 
-          const sameAsLast = lastMatchRef.current === best.card.id;
           lastMatchRef.current = best.card.id;
-          const hasArt = best.reasons.some((reason) => reason.startsWith("artwork"));
-
-          if (
-            isConfident(scan) ||
-            (sameAsLast && hasArt && best.score >= 58) ||
-            (sameAsLast && best.score >= 80)
-          ) {
+          if (isConfident(scan) || scan.matches.length > 0) {
             setResult(scan);
             setSelectedId(best.card.id);
             setHint(null);
-            return;
           }
-
-          cooldownRef.current = Date.now() + 350;
-          setHint("Bijna... houd nog even stil");
         })
-        .catch(() => {
-          cooldownRef.current = Date.now() + 900;
-          setHint("Opnieuw proberen...");
+        .catch((error: unknown) => {
+          cooldownRef.current = Date.now() + 2500;
+          const message = error instanceof Error ? error.message : "";
+          setHint(
+            /timeout|abort/i.test(message)
+              ? "Scanner start op, nog eens stilhouden..."
+              : "Opnieuw proberen...",
+          );
         })
         .finally(() => {
           busyRef.current = false;
@@ -382,7 +371,7 @@ export function Scanner({ lang, onAdd }: Props) {
     setResult(null);
     setSaved(false);
     setSelectedId(null);
-    setHint("Houd je kaart stil tegen een donkere achtergrond");
+    setHint("Houd je kaart stil in beeld");
     cooldownRef.current = Date.now() + 800;
     prevFrameRef.current = null;
     lastMatchRef.current = null;
@@ -425,7 +414,11 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-top">
             <div>
               <h2>Welke kaart?</h2>
-              <p className="muted">{result.foil ? "Foil gezien · tik de juiste foto" : "Tik de juiste foto"}</p>
+              <p className="muted">
+                {result.bestMatch
+                  ? `${result.bestMatch.score}% visuele match · tik de juiste foto`
+                  : "Tik de juiste foto"}
+              </p>
             </div>
             <button className="btn ghost btn-sm" onClick={reset}>
               Opnieuw
@@ -457,7 +450,7 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-footer">
             <div className="picker-chosen">
               <strong>{selected.name}</strong>
-              <span className="price">{formatEur(trendPrice(selected, result.foil))}</span>
+              <span className="price">{formatEur(trendPrice(selected))}</span>
             </div>
             <div className="sheet-actions">
               <select

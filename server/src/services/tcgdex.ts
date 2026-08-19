@@ -59,6 +59,14 @@ export async function getCard(id: string, lang: TcgLang): Promise<TcgdexCard> {
   return tcgFetch<TcgdexCard>(`${BASE}/${lang}/cards/${encodeURIComponent(id)}`);
 }
 
+export async function getCardOrNull(id: string, lang: TcgLang) {
+  try {
+    return await getCard(id, lang);
+  } catch {
+    return null;
+  }
+}
+
 export async function searchCards(
   lang: TcgLang,
   filters: {
@@ -68,6 +76,7 @@ export async function searchCards(
     hp?: number;
     page?: number;
     itemsPerPage?: number;
+    sortOrder?: "ASC" | "DESC";
   },
 ): Promise<TcgdexCardBrief[]> {
   const path =
@@ -80,7 +89,7 @@ export async function searchCards(
       "pagination:page": filters.page ?? 1,
       "pagination:itemsPerPage": filters.itemsPerPage ?? 40,
       "sort:field": "releaseDate",
-      "sort:order": "ASC",
+      "sort:order": filters.sortOrder ?? "DESC",
     });
 
   const result = await tcgFetch<TcgdexCardBrief[] | TcgdexCardBrief>(path);
