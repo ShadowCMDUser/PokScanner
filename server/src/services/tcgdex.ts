@@ -3,6 +3,7 @@ import type {
   TcgdexCard,
   TcgdexCardBrief,
 } from "../types.js";
+import { rememberSetCode, setIdForCode } from "./setCodes.js";
 
 const BASE = "https://api.tcgdex.net/v2";
 const SUPPORTED_LANGS = ["en", "fr", "de", "es", "it"] as const;
@@ -158,6 +159,69 @@ export async function listSets(lang: TcgLang) {
   const sets = Array.isArray(result) ? result : [result];
   setsCache = { lang, at: Date.now(), sets };
   return sets;
+}
+
+type SetDetail = SetBrief & {
+  abbreviation?: { official?: string };
+  abbreviations?: { official?: string };
+};
+
+async function lookupSetIdByAbbreviation(lang: TcgLang, code: string, setTotal?: string | null) {
+  const sets = await listSets(lang);
+  const ranked = setTotal
+    ? [
+        ...sets.filter(
+          (set) => sameCount(set.cardCount?.official, setTotal) || sameCount(set.cardCount?.total, setTotal),
+        ),
+        ...sets,
+      ]
+    : sets;
+  const unique = [...new Map(ranked.map((set) => [set.id, set])).values()].slice(0, 48);
+  const found = await mapPool(unique, 10, async (set) => {
+    try {
+      const detail = await tcgFetch<SetDetail>(`${BASE}/${lang}/sets/${encodeURIComponent(set.id)}`);
+      const official = (detail.abbreviation?.official ?? detail.abbreviations?.official ?? "").toUpperCase();
+      if (official) rememberSetCode(official, set.id);
+      return official === code ? set.id : null;
+    } catch {
+      return null;
+    }
+  });
+  return found.find((id): id is string => Boolean(id)) ?? null;
+}
+
+export async function resolveSetId(lang: TcgLang, setCode: string, setTotal?: string | null) {
+  const code = setCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const seeded = setIdForCode(code);
+  if (seeded) {
+    if (!setTotal) return seeded;
+    const sets = await listSets(lang);
+    const set = sets.find((item) => item.id === seeded);
+    if (
+      !set ||
+      sameCount(set.cardCount?.official, setTotal) ||
+      sameCount(set.cardCount?.total, setTotal)
+    ) {
+      return seeded;
+    }
+  }
+  return lookupSetIdByAbbreviation(lang, code, setTotal);
+}
+
+export async function cardsBySetStamp(
+  lang: TcgLang,
+  setCode: string,
+  localId: string,
+  setTotal?: string | null,
+): Promise<TcgdexCard[]> {
+  const setId = await resolveSetId(lang, setCode, setTotal);
+  if (!setId) return [];
+  const found: TcgdexCard[] = [];
+  for (const local of localIdVariants(localId)) {
+    const card = await getCardOrNull(`${setId}-${local}`, lang);
+    if (card) found.push(card);
+  }
+  return found;
 }
 
 export async function cardsByCollector(

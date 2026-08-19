@@ -2,13 +2,35 @@ import { join } from "node:path";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { dataDir } from "../paths.js";
 import type { OcrResult } from "../types.js";
+import { codeVariants, knownCodesByLength, setIdForCode } from "./setCodes.js";
 
 const NAME_NOISE =
   /^(basic|stage|hp|weakness|resistance|retreat|illustrator|illus|evolves?|ability|attack|trainer|energy|pokemon|item|tool|supporter|stadium|length|weight|power|put|this|card|into|play|during|your|turn|when|that|with|have|from|cost|rule|box|used|once|more|each|time|heal|damage|knocked|prize|cards|mega-evolved|form)$/i;
 
 const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '-.";
 const NUMBER_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/ -";
-const STAMP_CHARS = "0123456789/ ";
+const STAMP_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/ ";
+const PRINT_LANG = /^(EN|FR|DE|ES|IT|PT|NL|JP)$/;
+const CODE_NOISE = new Set([
+  "HP",
+  "EX",
+  "GX",
+  "EN",
+  "FR",
+  "DE",
+  "ES",
+  "IT",
+  "PT",
+  "NL",
+  "JP",
+  "THE",
+  "AND",
+  "INC",
+  "ILL",
+  "ILLUS",
+  "BASIC",
+  "STAGE",
+]);
 
 const EVOLVES_FROM =
   /(?:evolves?\s+from|evolue\s+de|évolue\s+de|entwickelt\s+sich\s+aus)\s+([A-Za-z][A-Za-z '\-]{2,24})/i;
@@ -137,9 +159,49 @@ function extractCollector(text: string) {
   for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\](\d{2,3})/g)) {
     add(match[1], match[2]);
   }
+  for (const match of cleaned.matchAll(/\b([A-Z]{1,3}\d{1,3})\s*[\/\\]\s*(\d{2,4})\b/gi)) {
+    pairs.push({ number: match[1].toUpperCase(), total: match[2], score: 12 });
+  }
 
   pairs.sort((a, b) => b.score - a.score || Number(b.total) - Number(a.total));
   return pairs[0] ? { number: pairs[0].number, total: pairs[0].total } : { number: null, total: null };
+}
+
+function resolvePrintedCode(raw: string) {
+  for (const variant of codeVariants(raw)) {
+    if (PRINT_LANG.test(variant) || CODE_NOISE.has(variant)) continue;
+    if (setIdForCode(variant)) return variant;
+  }
+  return null;
+}
+
+export function extractSetCode(text: string) {
+  const upper = tidy(text).toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9\/]/g, "");
+
+  for (const code of knownCodesByLength()) {
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code)) continue;
+    const besideNumber = new RegExp(
+      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?(?:[A-Z]{1,3})?\\d{1,3}\\/\\d{2,4}`,
+    );
+    if (besideNumber.test(compact)) return code;
+  }
+
+  const nextToNumber = upper.match(
+    /\b([A-Z0-9]{2,5})\s*(?:EN|FR|DE|ES|IT|PT|NL|JP)?\s*(?:\d{1,3}|[A-Z]{1,3}\d{1,3})\s*[\/\\]\s*\d{2,4}\b/,
+  );
+  if (nextToNumber?.[1]) {
+    const code = resolvePrintedCode(nextToNumber[1]);
+    if (code) return code;
+  }
+
+  for (const code of knownCodesByLength()) {
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    const token = new RegExp(`(?<![A-Z0-9])${code}(?![A-Z0-9])`);
+    if (token.test(upper)) return code;
+  }
+
+  return null;
 }
 
 function sameName(a: string, b: string) {
@@ -203,6 +265,7 @@ export function emptyOcr(): OcrResult {
     evolvesFrom: null,
     hp: null,
     collectorNumber: null,
+    setCode: null,
     setTotal: null,
     illustrator: null,
     stage: null,
@@ -222,6 +285,7 @@ export async function readCardText(regions: {
   bottomInk?: Buffer;
   stamp?: Buffer;
   stampInk?: Buffer;
+  stampInv?: Buffer;
 }): Promise<OcrResult> {
   const plate = regions.plate
     ? await recognize(regions.plate, PSM.SINGLE_LINE, NAME_CHARS)
@@ -231,10 +295,13 @@ export async function readCardText(regions: {
     ? await recognize(regions.body, PSM.SPARSE_TEXT)
     : { text: "", confidence: 0 };
   const stamp = regions.stamp
-    ? await recognize(regions.stamp, PSM.SINGLE_LINE, STAMP_CHARS)
+    ? await recognize(regions.stamp, PSM.SPARSE_TEXT, STAMP_CHARS)
     : { text: "", confidence: 0 };
   const stampInk = regions.stampInk
     ? await recognize(regions.stampInk, PSM.SPARSE_TEXT, STAMP_CHARS)
+    : { text: "", confidence: 0 };
+  const stampInv = regions.stampInv
+    ? await recognize(regions.stampInv, PSM.SPARSE_TEXT, STAMP_CHARS)
     : { text: "", confidence: 0 };
   const bottom = await recognize(regions.bottom, PSM.SINGLE_LINE, NUMBER_CHARS);
   const bottomInk = regions.bottomInk
@@ -242,11 +309,21 @@ export async function readCardText(regions: {
     : { text: "", confidence: 0 };
   const full = await recognize(regions.full, PSM.SPARSE_TEXT);
 
-  const combined = [plate.text, top.text, body.text, full.text, stamp.text, stampInk.text, bottom.text, bottomInk.text]
+  const combined = [
+    plate.text,
+    top.text,
+    body.text,
+    full.text,
+    stamp.text,
+    stampInk.text,
+    stampInv.text,
+    bottom.text,
+    bottomInk.text,
+  ]
     .filter(Boolean)
     .join("\n");
   const evolvesFrom = extractEvolvesFrom(combined);
-  const stampText = `${stamp.text}\n${stampInk.text}`;
+  const stampText = `${stamp.text}\n${stampInk.text}\n${stampInv.text}`;
   const footer = `${stampText}\n${bottom.text}\n${bottomInk.text}\n${full.text}`;
   const collector = extractCollector(stampText);
   const fallback = collector.number ? collector : extractCollector(footer);
@@ -258,6 +335,7 @@ export async function readCardText(regions: {
     evolvesFrom,
     hp: extractHp(`${plate.text}\n${top.text}\n${combined}`),
     collectorNumber: fallback.number,
+    setCode: extractSetCode(stampText) ?? extractSetCode(footer),
     setTotal: fallback.total,
     illustrator: extractIllustrator(combined),
     stage: extractStage(combined),

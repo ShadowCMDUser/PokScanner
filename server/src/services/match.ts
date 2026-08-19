@@ -1,6 +1,7 @@
 import type { OcrResult, ScoredMatch, TcgdexCard, TcgdexCardBrief } from "../types.js";
 import {
   cardsByCollector,
+  cardsBySetStamp,
   hydrateCards,
   normalizeLang,
   searchAllCards,
@@ -9,6 +10,7 @@ import {
 } from "./tcgdex.js";
 import { artworkScores, layoutScores, symbolScores } from "./vision.js";
 import { orbScores } from "./orbMatch.js";
+import { setIdForCode } from "./setCodes.js";
 
 export type VisionHints = {
   artHash: bigint;
@@ -92,6 +94,12 @@ function scoreCard(
       (sameCount(ocr.setTotal, card.set.cardCount.official) ||
         sameCount(ocr.setTotal, card.set.cardCount.total)),
   );
+  const stampMatch = Boolean(
+    ocr.setCode &&
+      numberMatch &&
+      setIdForCode(ocr.setCode) === card.set?.id &&
+      (!ocr.setTotal || setMatch),
+  );
 
   if (isPreEvolution(card.name, ocr.evolvesFrom)) {
     return { card, score: 0, reasons: ["voorevolutie"] };
@@ -99,11 +107,15 @@ function scoreCard(
 
   const looksLike = orbScore >= 18 || artScore >= 36;
   const identity = named && numberMatch && setMatch;
-  if (!looksLike && !identity) {
+  if (!looksLike && !identity && !stampMatch) {
     return { card, score: 0, reasons: ["geen beeldmatch"] };
   }
 
   let score = 0;
+  if (stampMatch) {
+    score += 86;
+    reasons.push("setcode+nummer");
+  }
   if (orbScore >= 18) {
     score += Math.round(orbScore * 3);
     reasons.push("orb");
@@ -147,6 +159,10 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
     .filter((name) => !isPreEvolution(name, ocr.evolvesFrom))
     .slice(0, 2);
 
+  if (ocr.setCode && ocr.collectorNumber) {
+    queries.push(cardsBySetStamp(lang, ocr.setCode, ocr.collectorNumber, ocr.setTotal));
+  }
+
   if (ocr.collectorNumber && ocr.setTotal) {
     queries.push(cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal));
   }
@@ -186,6 +202,10 @@ function briefScore(brief: TcgdexCardBrief, ocr: OcrResult) {
   if (ocr.collectorNumber && sameLocalId(brief.localId, ocr.collectorNumber)) {
     score += 50;
   }
+  const setId = setIdForCode(ocr.setCode);
+  if (setId && brief.id.toLowerCase().startsWith(`${setId.toLowerCase()}-`)) {
+    score += 80;
+  }
   return score;
 }
 
@@ -205,9 +225,14 @@ export async function matchCard(
   if (!unique.length) return [];
 
   const stamped =
-    ocr.collectorNumber && ocr.setTotal
-      ? unique.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!))
-      : [];
+    ocr.setCode && ocr.collectorNumber
+      ? unique.filter((card) => {
+          const setId = setIdForCode(ocr.setCode);
+          return Boolean(setId && card.id.toLowerCase().startsWith(`${setId.toLowerCase()}-`) && sameLocalId(card.localId, ocr.collectorNumber!));
+        })
+      : ocr.collectorNumber && ocr.setTotal
+        ? unique.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!))
+        : [];
   const byText = unique
     .map((brief) => ({ brief, score: briefScore(brief, ocr) }))
     .filter((item) => item.score >= 30)

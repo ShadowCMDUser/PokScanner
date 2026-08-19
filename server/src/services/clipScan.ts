@@ -255,6 +255,7 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
     evolvesFrom: null,
     hp: Number.isFinite(hpValue) ? hpValue : null,
     collectorNumber: payload.card_info?.card_number ?? parsed[0]?.info.number ?? null,
+    setCode: null,
     setTotal: null,
     illustrator: null,
     stage: null,

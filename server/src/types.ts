@@ -86,6 +86,7 @@ export type OcrResult = {
   evolvesFrom: string | null;
   hp: number | null;
   collectorNumber: string | null;
+  setCode: string | null;
   setTotal: string | null;
   illustrator: string | null;
   stage: string | null;
