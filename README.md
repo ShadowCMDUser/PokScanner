@@ -51,9 +51,15 @@ De repo bevat `nixpacks.toml`. In Dokploy:
 
 1. Builder: **Nixpacks**
 2. Healthcheck: `/api/health`
-3. Poort: laat Dokploy `PORT` zetten (de app luistert op `0.0.0.0`)
-4. Persistent volume (aanbevolen): mount naar `/app/data` zodat collectie, accounts en OCR-cache bewaard blijven
-5. Zet `BETTER_AUTH_SECRET` en `BETTER_AUTH_URL` in de environment
+3. **Poort in de app: `3000`** (containerpoort). Dat is niet 9999. 9999 is alleen de publieke poort van je andere app.
+4. Domein: `scanner.thisisours.duckdns.org` (eigen DNS, niet dezelfde host-mapping als die andere app)
+5. Persistent volume (aanbevolen): mount naar `/app/data`
+6. Environment:
+   - `BETTER_AUTH_URL=https://scanner.thisisours.duckdns.org`
+   - `BETTER_AUTH_SECRET` (optioneel maar aangeraden)
+   - `PORT=3000` als Dokploy die niet zelf zet
+
+Een 502 betekent: Traefik/Caddy komt niet bij Node. Meestal staat de Dokploy-poort dan op 9999 of 3001 in plaats van **3000**.
 
 Geen API-keys nodig voor de catalogus (TCGdex). Voor scans mag de reverse-proxy uploadlimiet 20MB zijn.
 

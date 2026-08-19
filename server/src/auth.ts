@@ -1,4 +1,6 @@
 import "./env.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { betterAuth } from "better-auth";
 import Database from "better-sqlite3";
@@ -11,6 +13,22 @@ function envPair(idKey: string, secretKey: string) {
   const clientSecret = process.env[secretKey]?.trim();
   if (!clientId || !clientSecret) return null;
   return { clientId, clientSecret };
+}
+
+function resolveSecret() {
+  if (process.env.BETTER_AUTH_SECRET?.trim()) {
+    return process.env.BETTER_AUTH_SECRET.trim();
+  }
+
+  const secretPath = join(dataDir, "auth-secret");
+  if (existsSync(secretPath)) {
+    return readFileSync(secretPath, "utf8").trim();
+  }
+
+  const generated = randomBytes(32).toString("hex");
+  writeFileSync(secretPath, generated, "utf8");
+  console.warn("BETTER_AUTH_SECRET ontbrak; er is een secret weggeschreven in data/auth-secret");
+  return generated;
 }
 
 const google = envPair("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET");
@@ -27,24 +45,18 @@ const isProd = process.env.NODE_ENV === "production";
 const baseURL =
   process.env.BETTER_AUTH_URL?.replace(/\/$/, "") ||
   process.env.APP_URL?.replace(/\/$/, "") ||
-  (isProd ? undefined : "http://localhost:5173");
-
-if (isProd && !process.env.BETTER_AUTH_SECRET) {
-  throw new Error("BETTER_AUTH_SECRET ontbreekt. Zet die in Dokploy.");
-}
-
-if (isProd && !baseURL) {
-  throw new Error("BETTER_AUTH_URL ontbreekt. Zet je publieke https-URL in Dokploy.");
-}
+  (isProd ? "https://scanner.thisisours.duckdns.org" : "http://localhost:5173");
 
 export const auth = betterAuth({
   appName: "PokScanner",
   baseURL,
-  secret: process.env.BETTER_AUTH_SECRET || "dev-only-change-me-in-production-ok",
+  secret: resolveSecret(),
   database: new Database(join(dataDir, "auth.sqlite")),
   trustedOrigins: [
     baseURL,
+    "https://scanner.thisisours.duckdns.org",
     "http://localhost:5173",
+    "http://localhost:3000",
     "http://localhost:3001",
     process.env.APP_URL,
   ].filter((value): value is string => Boolean(value)),

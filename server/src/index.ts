@@ -10,7 +10,7 @@ import { scanRouter } from "./routes/scan.js";
 import { searchRouter } from "./routes/search.js";
 
 const app = express();
-const port = Number(process.env.PORT ?? 3001);
+const port = Number(process.env.PORT ?? (process.env.NODE_ENV === "production" ? 3000 : 3001));
 const host = process.env.HOST ?? "0.0.0.0";
 
 app.set("trust proxy", 1);
