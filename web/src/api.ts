@@ -4,7 +4,6 @@ import type {
   CollectionResponse,
   Lang,
   ScanResponse,
-  SocialProvider,
   TcgdexCard,
 } from "./types";
 
@@ -51,11 +50,6 @@ export async function searchCards(query: string, lang: Lang) {
   const params = new URLSearchParams({ q: query, lang });
   const response = await fetch(`/api/cards?${params}`, credentials);
   return parseJson<TcgdexCard[]>(response);
-}
-
-export async function fetchLoginOptions() {
-  const response = await fetch("/api/login-options", credentials);
-  return parseJson<{ providers: SocialProvider[] }>(response);
 }
 
 export async function fetchCollection() {

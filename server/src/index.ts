@@ -3,7 +3,7 @@ import cors from "cors";
 import express from "express";
 import { join } from "node:path";
 import { toNodeHandler, fromNodeHeaders } from "better-auth/node";
-import { auth, enabledSocialProviders } from "./auth.js";
+import { auth, migrateAuth } from "./auth.js";
 import { hasWebBuild, webDistDir } from "./paths.js";
 import { collectionRouter } from "./routes/collection.js";
 import { scanRouter } from "./routes/scan.js";
@@ -21,16 +21,27 @@ app.use(
   }),
 );
 
-app.all("/api/auth/*", toNodeHandler(auth));
+const handleAuth = toNodeHandler(auth);
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/auth")) {
+    next();
+    return;
+  }
+
+  void handleAuth(req, res).catch((error: unknown) => {
+    console.error("Auth-fout:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Inloggen mislukt",
+      });
+    }
+  });
+});
 
 app.use(express.json({ limit: "20mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, name: "PokScanner" });
-});
-
-app.get("/api/login-options", (_req, res) => {
-  res.json({ providers: enabledSocialProviders });
 });
 
 app.get("/api/me", async (req, res) => {
@@ -64,6 +75,8 @@ app.use((error: Error, _req: express.Request, res: express.Response, next: expre
   }
   res.status(500).json({ error: error.message || "Onbekende serverfout" });
 });
+
+await migrateAuth();
 
 app.listen(port, host, () => {
   console.log(`PokScanner luistert op http://${host}:${port}`);

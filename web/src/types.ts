@@ -95,14 +95,5 @@ export type CollectionResponse = {
   };
 };
 
-export type SocialProvider = "google" | "facebook" | "discord";
-
-export type SessionUser = {
-  id: string;
-  name: string;
-  email: string;
-  image?: string | null;
-};
-
 export type Page = "scan" | "collection" | "search";
 export type Lang = "en" | "fr" | "de" | "es" | "it";

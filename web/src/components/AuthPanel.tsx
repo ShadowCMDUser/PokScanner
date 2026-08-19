@@ -1,19 +1,12 @@
 import { useState, type FormEvent } from "react";
-import { authClient, type SocialProvider } from "../auth-client";
-
-const SOCIAL: { id: SocialProvider; label: string; className: string }[] = [
-  { id: "google", label: "Doorgaan met Google", className: "google" },
-  { id: "facebook", label: "Doorgaan met Facebook", className: "facebook" },
-  { id: "discord", label: "Doorgaan met Discord", className: "discord" },
-];
+import { authClient } from "../auth-client";
 
 type Props = {
-  providers: SocialProvider[];
   onDone?: () => void;
 };
 
-export function AuthPanel({ providers, onDone }: Props) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+export function AuthPanel({ onDone }: Props) {
+  const [mode, setMode] = useState<"login" | "register">("register");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,41 +37,9 @@ export function AuthPanel({ providers, onDone }: Props) {
     }
   }
 
-  async function social(provider: SocialProvider) {
-    if (!providers.includes(provider)) {
-      setError("Deze login is nog niet ingesteld. Gebruik e-mail of voeg de keys toe in Dokploy.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const result = await authClient.signIn.social({
-      provider,
-      callbackURL: "/",
-    });
-    if (result.error) {
-      setError(result.error.message || "Social login mislukt");
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="auth-panel">
-      <div className="social-grid">
-        {SOCIAL.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`btn social ${item.className}`}
-            disabled={busy}
-            onClick={() => void social(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="auth-split">of met e-mail</div>
-
+      <h2>{mode === "login" ? "Inloggen" : "Account maken"}</h2>
       <form className="auth-form" onSubmit={(event) => void submit(event)}>
         {mode === "register" && (
           <input

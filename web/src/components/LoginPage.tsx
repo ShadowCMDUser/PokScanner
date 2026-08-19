@@ -1,12 +1,11 @@
 import { AuthPanel } from "./AuthPanel";
-import type { SocialProvider } from "../auth-client";
+import { InstallHint } from "./InstallHint";
 
 type Props = {
-  providers: SocialProvider[];
   onDone?: () => void;
 };
 
-export function LoginPage({ providers, onDone }: Props) {
+export function LoginPage({ onDone }: Props) {
   return (
     <main className="login-screen">
       <div className="login-brand">
@@ -16,11 +15,12 @@ export function LoginPage({ providers, onDone }: Props) {
           <circle cx="32" cy="32" r="10" fill="#fff" stroke="#111118" strokeWidth="4" />
         </svg>
         <h1>PokScanner</h1>
-        <p>Log in om je kaarten te scannen en te bewaren.</p>
+        <p>Maak een account of log in om te scannen.</p>
       </div>
       <div className="login-card">
-        <AuthPanel providers={providers} onDone={onDone} />
+        <AuthPanel onDone={onDone} />
       </div>
+      <InstallHint />
     </main>
   );
 }

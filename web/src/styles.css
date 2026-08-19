@@ -411,35 +411,6 @@ select,
   gap: 12px;
 }
 
-.social-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.btn.social {
-  border-color: var(--line);
-  width: 100%;
-}
-
-.btn.google {
-  background: #fff;
-  color: #1f1f1f;
-}
-
-.btn.facebook {
-  background: #1877f2;
-}
-
-.btn.discord {
-  background: #5865f2;
-}
-
-.auth-split {
-  color: var(--muted);
-  text-align: center;
-  font-size: 0.85rem;
-}
-
 .user-chip {
   display: flex;
   align-items: center;
@@ -547,4 +518,9 @@ select,
   .search-bar .btn {
     width: 100%;
   }
+}
+
+.install-hint {
+  display: grid;
+  gap: 8px;
 }

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { addCard, fetchLoginOptions } from "./api";
+import { addCard } from "./api";
 import { authClient } from "./auth-client";
 import { Collection } from "./components/Collection";
 import { LoginPage } from "./components/LoginPage";
 import { Scanner } from "./components/Scanner";
 import { Search } from "./components/Search";
-import type { CardCondition, Lang, Page, SocialProvider, TcgdexCard } from "./types";
+import type { CardCondition, Lang, Page, TcgdexCard } from "./types";
 
 const LANGS: { id: Lang; label: string }[] = [
   { id: "en", label: "EN" },
@@ -44,17 +44,10 @@ export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
   const [lang, setLang] = useState<Lang>("en");
   const [notice, setNotice] = useState<string | null>(null);
-  const [providers, setProviders] = useState<SocialProvider[]>([]);
 
   const goTo = useCallback((next: Page) => {
     setPage(next);
     setHash(next);
-  }, []);
-
-  useEffect(() => {
-    void fetchLoginOptions()
-      .then((options) => setProviders(options.providers))
-      .catch(() => setProviders([]));
   }, []);
 
   useEffect(() => {
@@ -81,7 +74,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginPage providers={providers} onDone={() => goTo("scan")} />;
+    return <LoginPage onDone={() => goTo("scan")} />;
   }
 
   return (

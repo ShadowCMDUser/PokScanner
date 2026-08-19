@@ -29,21 +29,12 @@ Tips voor betere herkenning: recht van boven, weinig glare op holo’s, collecto
 
 ## Inloggen
 
-E-mail/wachtwoord werkt meteen. Google, Facebook en Discord alleen als je hun keys in de environment zet. Kopieer `.env.example` naar `.env` voor lokaal.
+Maak een account met e-mail en wachtwoord (minstens 8 tekens). Daarna kun je inloggen op dezelfde pagina.
 
-Callback-URL’s bij de providers (lokaal / productie):
-
-- `/api/auth/callback/google`
-- `/api/auth/callback/facebook`
-- `/api/auth/callback/discord`
-
-Voorbeeld productie: `https://pokscanner.jouwdomein.be/api/auth/callback/google`
-
-In Dokploy minstens:
+In Dokploy optioneel:
 
 - `BETTER_AUTH_SECRET` (lange random string)
-- `BETTER_AUTH_URL` (je publieke https-URL, zonder slash op het einde)
-- de client id/secret van de social logins die je wilt
+- `BETTER_AUTH_URL=https://scanner.thisisours.duckdns.org`
 
 ## Deploy (Dokploy + Nixpacks)
 
@@ -60,6 +51,8 @@ De repo bevat `nixpacks.toml`. In Dokploy:
    - `PORT=3000` als Dokploy die niet zelf zet
 
 Een 502 betekent: Traefik/Caddy komt niet bij Node. Meestal staat de Dokploy-poort dan op 9999 of 3001 in plaats van **3000**.
+
+De site is een **PWA**. Op telefoon: “Installeer als app”, of op iPhone Deel → Zet op beginscherm.
 
 Geen API-keys nodig voor de catalogus (TCGdex). Voor scans mag de reverse-proxy uploadlimiet 20MB zijn.
 
