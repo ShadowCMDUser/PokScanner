@@ -252,17 +252,17 @@ img {
   display: none;
 }
 
-.card-guide {
+.stamp-guide {
   position: absolute;
   left: 50%;
-  top: 46%;
+  top: 44%;
   z-index: 2;
-  width: min(86vw, 380px);
-  aspect-ratio: 63 / 88;
+  width: min(90vw, 360px);
+  aspect-ratio: 3.3 / 1;
   transform: translate(-50%, -50%);
-  border: 2px solid rgba(255, 255, 255, 0.55);
-  border-radius: 14px;
-  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.38);
   pointer-events: none;
 }
 

@@ -245,9 +245,6 @@ export async function flattenCard(input: Buffer) {
   const height = meta.height ?? 0;
   if (!width || !height) return source;
 
-  const alreadyCard = Math.abs(Math.log(width / Math.max(height, 1) / (CARD_W / CARD_H))) < 0.12;
-  if (alreadyCard) return source;
-
   const probeW = 320;
   const probeH = Math.max(160, Math.round((probeW * height) / width));
   const { data } = await sharp(source)
@@ -269,7 +266,7 @@ export async function flattenCard(input: Buffer) {
     const cy = mapped.reduce((sum, point) => sum + point.y, 0) / 4;
     const corners = mapped.map((point) => ({
       x: clamp(point.x + (point.x - cx) * 0.05, 0, width - 1),
-      y: clamp(point.y + (point.y - cy) * 0.05, 0, height - 1),
+      y: clamp(point.y + (point.y - cy) * 0.08, 0, height - 1),
     }));
     card = await warpToSize(source, corners);
   }

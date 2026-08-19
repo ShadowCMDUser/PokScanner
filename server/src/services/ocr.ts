@@ -166,8 +166,11 @@ function extractCollector(text: string) {
   for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{2,3})7(\d{2,3})/g)) {
     add(match[1], match[2], 5);
   }
-  for (const match of cleaned.matchAll(/\b([A-Z]{1,3}\d{1,3})\s*[\/\\:\-]\s*(\d{2,4})\b/g)) {
-    pairs.push({ number: match[1], total: digits(match[2]), score: 12 });
+  for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{3})(\d{3})$/g)) {
+    add(match[1], match[2], 3);
+  }
+  for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{2})(\d{3})$/g)) {
+    add(match[1], match[2], 1);
   }
 
   pairs.sort((a, b) => b.score - a.score || Number(b.total) - Number(a.total));
@@ -189,21 +192,15 @@ export function extractSetCode(text: string) {
   for (const code of knownCodesByLength()) {
     if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
     const besideNumber = new RegExp(
-      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?(?:[A-Z]{0,3})?\\d{1,3}[\\/7]\\d{2,4}`,
+      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?\\d{1,3}[\\/7]\\d{2,4}`,
     );
     if (besideNumber.test(compact)) return code;
-    const nearby = compact.indexOf(code);
-    if (nearby >= 0 && /\d/.test(compact.slice(nearby + code.length, nearby + code.length + 10))) {
-      return code;
-    }
   }
 
-  const nextToNumber = upper.match(
-    /\b([A-Z0-9]{2,5})\s*(?:EN|FR|DE|ES|IT|PT|NL|JP)?\s*(?:\d{1,3}|[A-Z]{1,3}\d{1,3})\s*[\/\\7]\s*\d{2,4}\b/,
-  );
-  if (nextToNumber?.[1]) {
-    const code = resolvePrintedCode(nextToNumber[1]);
-    if (code) return code;
+  for (const code of knownCodesByLength()) {
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    const token = new RegExp(`(?<![A-Z0-9])${code}(?![A-Z0-9])`);
+    if (token.test(upper)) return code;
   }
 
   return null;
@@ -290,15 +287,14 @@ export type StampId = {
 };
 
 export function extractStampId(text: string): Omit<StampId, "rawText" | "confidence"> {
-  const collector = extractCollector(text);
-  let setCode = extractSetCode(text);
+  const cleaned = tidy(text).toUpperCase().replace(/\b20[2-9]\d\b/g, " ");
+  const collector = extractCollector(cleaned);
+  let setCode = extractSetCode(cleaned);
   let number = collector.number;
-  const compact = tidy(text).toUpperCase().replace(/[^A-Z0-9\/]/g, "");
+  const compact = cleaned.replace(/[^A-Z0-9\/]/g, "");
 
   if (!setCode) {
-    const promo = tidy(text)
-      .toUpperCase()
-      .match(/\b(SVP|BWP|XYP|SMP|MEP)\s*(?:EN|FR|DE|ES|IT|PT)?\s*(\d{1,3})\b/);
+    const promo = cleaned.match(/\b(SVP|BWP|XYP|SMP|MEP)\s*(?:EN|FR|DE|ES|IT|PT)?\s*(\d{1,3})\b/);
     if (promo) {
       setCode = promo[1];
       number = String(Number(digits(promo[2])) || promo[2]);
@@ -306,14 +302,17 @@ export function extractStampId(text: string): Omit<StampId, "rawText" | "confide
   }
 
   if (setCode && !number) {
-    const after = compact.match(
-      new RegExp(`${setCode}(?:EN|FR|DE|ES|IT|PT|NL|JP)?([A-Z]{0,3}\\d{1,3})(?:\\/(\\d{2,4}))?`),
-    );
-    if (after?.[1]) {
-      const local = after[1].replace(/^[A-Z]+/, "") || after[1];
-      const n = Number(digits(local));
-      if (Number.isFinite(n) && n >= 1) number = String(n);
-      else number = after[1];
+    const promoSets = new Set(["SVP", "BWP", "XYP", "SMP", "MEP"]);
+    if (promoSets.has(setCode)) {
+      const after = compact.match(new RegExp(`${setCode}(?:EN|FR|DE|ES|IT|PT)?(\\d{1,3})`));
+      if (after?.[1]) number = String(Number(digits(after[1])) || after[1]);
+    } else {
+      const after = compact.match(
+        new RegExp(`${setCode}(?:EN|FR|DE|ES|IT|PT|NL|JP)?(\\d{1,3})[\\/7](\\d{2,4})`),
+      );
+      if (after?.[1]) {
+        number = String(Number(digits(after[1])) || after[1]);
+      }
     }
   }
 
@@ -337,6 +336,7 @@ export async function readStamp(regions: {
   contrast: Buffer;
   ink: Buffer;
   inv: Buffer;
+  digits?: Buffer;
 }): Promise<StampId> {
   const stamp: StampId = {
     setCode: null,
@@ -346,16 +346,17 @@ export async function readStamp(regions: {
     confidence: 0,
   };
 
-  const passes: { image: Buffer; psm: PSM }[] = [
-    { image: regions.contrast, psm: PSM.SPARSE_TEXT },
-    { image: regions.inv, psm: PSM.SPARSE_TEXT },
-    { image: regions.ink, psm: PSM.SPARSE_TEXT },
-  ];
+  const passes: Buffer[] = [regions.ink, regions.inv, regions.contrast];
 
-  for (const pass of passes) {
-    const result = await recognize(pass.image, pass.psm, STAMP_CHARS);
+  for (const image of passes) {
+    const result = await recognize(image, PSM.SPARSE_TEXT, STAMP_CHARS);
     mergeStamp(stamp, result.text, result.confidence);
     if (stamp.setCode && stamp.collectorNumber) break;
+  }
+
+  if (!stamp.collectorNumber && regions.digits) {
+    const result = await recognize(regions.digits, PSM.SPARSE_TEXT, "0123456789/ ");
+    mergeStamp(stamp, result.text, result.confidence);
   }
 
   return stamp;
