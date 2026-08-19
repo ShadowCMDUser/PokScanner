@@ -2,6 +2,7 @@ import type { OcrResult, ScoredMatch, TcgdexCard, TcgdexCardBrief } from "../typ
 import {
   hydrateCards,
   normalizeLang,
+  searchAllCards,
   searchCards,
   type TcgLang,
 } from "./tcgdex.js";
@@ -163,12 +164,7 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
   }
 
   if (ocr.evolvesFrom) {
-    queries.push(
-      searchCards(lang, {
-        evolveFrom: ocr.evolvesFrom,
-        itemsPerPage: 50,
-      }),
-    );
+    queries.push(searchAllCards(lang, { evolveFrom: ocr.evolvesFrom }, 200));
     if (ocr.collectorNumber) {
       queries.push(
         searchCards(lang, {
@@ -190,18 +186,18 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
   }
 
   for (const name of names) {
-    queries.push(searchCards(lang, { name, itemsPerPage: 40 }));
+    queries.push(searchAllCards(lang, { name }, 200));
     if (ocr.collectorNumber) {
       queries.push(
         searchCards(lang, {
           name,
           localId: ocr.collectorNumber,
-          itemsPerPage: 30,
+          itemsPerPage: 40,
         }),
       );
     }
     if (ocr.hp) {
-      queries.push(searchCards(lang, { name, hp: ocr.hp, itemsPerPage: 30 }));
+      queries.push(searchAllCards(lang, { name, hp: ocr.hp }, 80));
     }
   }
 
@@ -246,15 +242,15 @@ export async function matchCard(
 
   const ranked = [...new Map([...numbered, ...byText].map((card) => [card.id, card])).values()].slice(
     0,
-    18,
+    60,
   );
 
-  const cards = await hydrateCards(ranked, lang, 18);
+  const cards = await hydrateCards(ranked, lang, 48);
   const visuals = vision ? await artworkScores(vision.artHash, cards.map((card) => card.image)) : cards.map(() => 0);
 
   return cards
     .map((card, index) => scoreCard(card, ocr, visuals[index] ?? 0, vision?.foil ?? false))
     .filter((match) => match.score >= 40)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 8);
+    .slice(0, 16);
 }

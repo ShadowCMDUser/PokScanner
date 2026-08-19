@@ -3,7 +3,7 @@ import {
   getCard,
   hydrateCards,
   normalizeLang,
-  searchCards,
+  searchAllCards,
 } from "../services/tcgdex.js";
 
 export const searchRouter = Router();
@@ -17,8 +17,8 @@ searchRouter.get("/", async (req, res) => {
     }
 
     const lang = normalizeLang(String(req.query.lang ?? "en"));
-    const briefs = await searchCards(lang, { name: q, itemsPerPage: 24 });
-    const cards = await hydrateCards(briefs, lang, 12);
+    const briefs = await searchAllCards(lang, { name: q }, 300);
+    const cards = await hydrateCards(briefs, lang, briefs.length);
     res.json(cards);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Zoeken mislukt";

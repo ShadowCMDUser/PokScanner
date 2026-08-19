@@ -44,6 +44,10 @@ export function Search({ lang, onAdd }: Props) {
 
       {error && <div className="error">{error}</div>}
 
+      {!busy && cards.length > 0 && (
+        <p className="muted search-count">{cards.length} kaarten</p>
+      )}
+
       <div className="grid">
         {cards.map((card) => (
           <article className="card-tile" key={card.id}>

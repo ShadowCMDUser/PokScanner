@@ -67,18 +67,24 @@ export async function getCardOrNull(id: string, lang: TcgLang) {
   }
 }
 
+export type CardSearchFilters = {
+  name?: string;
+  localId?: string;
+  evolveFrom?: string;
+  hp?: number;
+  illustrator?: string;
+  page?: number;
+  itemsPerPage?: number;
+  sortOrder?: "ASC" | "DESC";
+};
+
+function uniqueBriefs(briefs: TcgdexCardBrief[]) {
+  return [...new Map(briefs.map((card) => [card.id, card])).values()];
+}
+
 export async function searchCards(
   lang: TcgLang,
-  filters: {
-    name?: string;
-    localId?: string;
-    evolveFrom?: string;
-    hp?: number;
-    illustrator?: string;
-    page?: number;
-    itemsPerPage?: number;
-    sortOrder?: "ASC" | "DESC";
-  },
+  filters: CardSearchFilters,
 ): Promise<TcgdexCardBrief[]> {
   const path =
     `${BASE}/${lang}/cards` +
@@ -98,26 +104,57 @@ export async function searchCards(
   return Array.isArray(result) ? result : [result];
 }
 
+export async function searchAllCards(
+  lang: TcgLang,
+  filters: Omit<CardSearchFilters, "page" | "itemsPerPage">,
+  max = 300,
+): Promise<TcgdexCardBrief[]> {
+  const path =
+    `${BASE}/${lang}/cards` +
+    queryString({
+      name: filters.name,
+      localId: filters.localId,
+      evolveFrom: filters.evolveFrom,
+      hp: filters.hp,
+      illustrator: filters.illustrator,
+    });
+
+  const result = await tcgFetch<TcgdexCardBrief[] | TcgdexCardBrief>(path);
+  const briefs = uniqueBriefs(Array.isArray(result) ? result : [result]);
+  return briefs.slice(0, max);
+}
+
+async function mapPool<T, R>(items: T[], limit: number, mapper: (item: T, index: number) => Promise<R>) {
+  const out = new Array<R>(items.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      out[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return out;
+}
+
 export async function hydrateCards(
   briefs: TcgdexCardBrief[],
   lang: TcgLang,
   limit = 8,
 ): Promise<TcgdexCard[]> {
-  const unique = [...new Map(briefs.map((card) => [card.id, card])).values()];
-  const slice = unique.slice(0, limit);
+  const slice = uniqueBriefs(briefs).slice(0, limit);
 
-  const cards = await Promise.all(
-    slice.map(async (brief) => {
-      try {
-        return await getCard(brief.id, lang);
-      } catch {
-        return {
-          ...brief,
-          pricing: { cardmarket: {} as CardmarketPricing },
-        } satisfies TcgdexCard;
-      }
-    }),
-  );
-
-  return cards;
+  return mapPool(slice, 10, async (brief) => {
+    try {
+      return await getCard(brief.id, lang);
+    } catch {
+      return {
+        ...brief,
+        pricing: { cardmarket: {} as CardmarketPricing },
+      } satisfies TcgdexCard;
+    }
+  });
 }

@@ -602,6 +602,11 @@ img {
   padding-inline: 16px;
 }
 
+.search-count {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
