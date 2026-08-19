@@ -2,6 +2,7 @@ import type { OcrResult, TcgdexCard } from "../types.js";
 import { catalogIdCandidates } from "./clipScan.js";
 import {
   cardsByCollector,
+  cardsByLocalId,
   cardsBySetStamp,
   getCardOrNull,
   hydrateCards,
@@ -81,11 +82,14 @@ export async function lookupCard(ocr: OcrResult, lang: TcgLang): Promise<TcgdexC
   const cards: TcgdexCard[] = [];
 
   if (ocr.setCode && ocr.collectorNumber) {
-    cards.push(...(await cardsBySetStamp(lang, ocr.setCode, ocr.collectorNumber, ocr.setTotal)));
+    const stamped = await cardsBySetStamp(lang, ocr.setCode, ocr.collectorNumber, ocr.setTotal);
+    if (stamped.length) return stamped;
   }
 
   if (ocr.collectorNumber && ocr.setTotal) {
     cards.push(...(await cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal)));
+  } else if (ocr.collectorNumber) {
+    cards.push(...(await hydrateCards(await cardsByLocalId(lang, ocr.collectorNumber), lang, 16)));
   }
 
   for (const name of names) {

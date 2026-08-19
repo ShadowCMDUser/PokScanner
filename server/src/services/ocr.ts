@@ -134,33 +134,37 @@ function stripEvolvesFrom(text: string) {
   return tidy(text).replace(EVOLVES_FROM, " ").replace(/\s+/g, " ").trim();
 }
 
-function extractCollector(text: string) {
-  const cleaned = tidy(text)
-    .replace(/[OQDo]/g, "0")
-    .replace(/[Il|]/g, "1");
+function digits(value: string) {
+  return value.replace(/[OQD]/gi, "0").replace(/[Il]/g, "1");
+}
 
+function extractCollector(text: string) {
+  const cleaned = tidy(text).toUpperCase();
   const pairs: { number: string; total: string; score: number }[] = [];
 
-  function add(number: string, total: string) {
-    const n = Number(number);
-    const t = Number(total);
+  function add(number: string, total: string, extra = 0) {
+    const n = Number(digits(number));
+    const t = Number(digits(total));
     if (!Number.isFinite(n) || !Number.isFinite(t)) return;
     if (n < 1 || n > 500 || t < 8 || t > 500) return;
-    let score = 8;
+    let score = 8 + extra;
     if (n <= t + 80) score += 6;
-    if (number.length >= 2) score += 2;
-    if (total.length >= 2) score += 2;
-    pairs.push({ number, total, score });
+    if (String(n).length >= 2) score += 2;
+    if (String(t).length >= 2) score += 2;
+    pairs.push({ number: String(n), total: String(t), score });
   }
 
-  for (const match of cleaned.matchAll(/(\d{1,3})\s*[\/\\]\s*(\d{2,3})\b/g)) {
-    add(match[1], match[2]);
+  for (const match of cleaned.matchAll(/(\d{1,3}|[OQDIL]{1,3})\s*[\/\\:\-]\s*(\d{2,3})\b/g)) {
+    add(match[1], match[2], 4);
   }
-  for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\](\d{2,3})/g)) {
-    add(match[1], match[2]);
+  for (const match of cleaned.matchAll(/(\d{1,3})\s+[I1|]\s+(\d{2,3})\b/g)) {
+    add(match[1], match[2], 2);
   }
-  for (const match of cleaned.matchAll(/\b([A-Z]{1,3}\d{1,3})\s*[\/\\]\s*(\d{2,4})\b/gi)) {
-    pairs.push({ number: match[1].toUpperCase(), total: match[2], score: 12 });
+  for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\:\-](\d{2,3})/g)) {
+    add(match[1], match[2], 3);
+  }
+  for (const match of cleaned.matchAll(/\b([A-Z]{1,3}\d{1,3})\s*[\/\\:\-]\s*(\d{2,4})\b/g)) {
+    pairs.push({ number: match[1], total: digits(match[2]), score: 12 });
   }
 
   pairs.sort((a, b) => b.score - a.score || Number(b.total) - Number(a.total));
@@ -276,6 +280,11 @@ export function emptyOcr(): OcrResult {
   };
 }
 
+async function readRegion(image: Buffer | undefined, psm: PSM, whitelist?: string) {
+  if (!image) return { text: "", confidence: 0 };
+  return recognize(image, psm, whitelist);
+}
+
 export async function readCardText(regions: {
   full: Buffer;
   plate?: Buffer;
@@ -287,61 +296,61 @@ export async function readCardText(regions: {
   stampInk?: Buffer;
   stampInv?: Buffer;
 }): Promise<OcrResult> {
-  const plate = regions.plate
-    ? await recognize(regions.plate, PSM.SINGLE_LINE, NAME_CHARS)
-    : { text: "", confidence: 0 };
-  const top = await recognize(regions.top, PSM.SINGLE_BLOCK, `${NAME_CHARS}0123456789`);
-  const body = regions.body
-    ? await recognize(regions.body, PSM.SPARSE_TEXT)
-    : { text: "", confidence: 0 };
-  const stamp = regions.stamp
-    ? await recognize(regions.stamp, PSM.SPARSE_TEXT, STAMP_CHARS)
-    : { text: "", confidence: 0 };
-  const stampInk = regions.stampInk
-    ? await recognize(regions.stampInk, PSM.SPARSE_TEXT, STAMP_CHARS)
-    : { text: "", confidence: 0 };
-  const stampInv = regions.stampInv
-    ? await recognize(regions.stampInv, PSM.SPARSE_TEXT, STAMP_CHARS)
-    : { text: "", confidence: 0 };
-  const bottom = await recognize(regions.bottom, PSM.SINGLE_LINE, NUMBER_CHARS);
-  const bottomInk = regions.bottomInk
-    ? await recognize(regions.bottomInk, PSM.SINGLE_LINE, NUMBER_CHARS)
-    : { text: "", confidence: 0 };
-  const full = await recognize(regions.full, PSM.SPARSE_TEXT);
+  const stamp = await readRegion(regions.stamp, PSM.SPARSE_TEXT, STAMP_CHARS);
+  const stampInk = await readRegion(regions.stampInk, PSM.SPARSE_TEXT, STAMP_CHARS);
+  const stampInv = await readRegion(regions.stampInv, PSM.SPARSE_TEXT, STAMP_CHARS);
+  let stampText = `${stamp.text}\n${stampInk.text}\n${stampInv.text}`;
+  let collector = extractCollector(stampText);
+  let setCode = extractSetCode(stampText);
 
-  const combined = [
-    plate.text,
-    top.text,
-    body.text,
-    full.text,
-    stamp.text,
-    stampInk.text,
-    stampInv.text,
-    bottom.text,
-    bottomInk.text,
-  ]
+  if (!collector.number || !setCode) {
+    const stampBlock = await readRegion(regions.stamp, PSM.SINGLE_BLOCK, STAMP_CHARS);
+    stampText = `${stampText}\n${stampBlock.text}`;
+    if (!collector.number) collector = extractCollector(stampText);
+    if (!setCode) setCode = extractSetCode(stampText);
+  }
+
+  let bottom = { text: "", confidence: 0 };
+  let bottomInk = { text: "", confidence: 0 };
+  if (!collector.number || !setCode) {
+    bottom = await readRegion(regions.bottom, PSM.SPARSE_TEXT, NUMBER_CHARS);
+    bottomInk = await readRegion(regions.bottomInk, PSM.SPARSE_TEXT, NUMBER_CHARS);
+    const footer = `${stampText}\n${bottom.text}\n${bottomInk.text}`;
+    if (!collector.number) collector = extractCollector(footer);
+    if (!setCode) setCode = extractSetCode(footer);
+  }
+
+  const plate = await readRegion(regions.plate, PSM.SINGLE_LINE, NAME_CHARS);
+  const top = await readRegion(regions.top, PSM.SINGLE_BLOCK, `${NAME_CHARS}0123456789`);
+  let body = { text: "", confidence: 0 };
+  let full = { text: "", confidence: 0 };
+  if (!collector.number && !setCode) {
+    body = await readRegion(regions.body, PSM.SPARSE_TEXT);
+    full = await readRegion(regions.full, PSM.SPARSE_TEXT);
+    const dump = `${stampText}\n${bottom.text}\n${bottomInk.text}\n${full.text}\n${body.text}`;
+    if (!collector.number) collector = extractCollector(dump);
+    if (!setCode) setCode = extractSetCode(dump);
+  }
+
+  const combined = [plate.text, top.text, body.text, full.text, stampText, bottom.text, bottomInk.text]
     .filter(Boolean)
     .join("\n");
   const evolvesFrom = extractEvolvesFrom(combined);
-  const stampText = `${stamp.text}\n${stampInk.text}\n${stampInv.text}`;
-  const footer = `${stampText}\n${bottom.text}\n${bottomInk.text}\n${full.text}`;
-  const collector = extractCollector(stampText);
-  const fallback = collector.number ? collector : extractCollector(footer);
-  const names = extractNames(`${plate.text}\n${top.text}`, top.text, combined, evolvesFrom);
+  const names = extractNames(`${plate.text}\n${top.text}`, top.text, `${plate.text}\n${top.text}`, evolvesFrom);
 
   return {
     rawText: combined.replace(/\n{2,}/g, "\n").trim(),
     nameCandidates: names,
     evolvesFrom,
-    hp: extractHp(`${plate.text}\n${top.text}\n${combined}`),
-    collectorNumber: fallback.number,
-    setCode: extractSetCode(stampText) ?? extractSetCode(footer),
-    setTotal: fallback.total,
+    hp: extractHp(`${plate.text}\n${top.text}`),
+    collectorNumber: collector.number,
+    setCode,
+    setTotal: collector.total,
     illustrator: extractIllustrator(combined),
-    stage: extractStage(combined),
-    regulationMark: extractRegulation(footer),
-    ability: extractAbility(body.text || combined),
-    attacks: extractAttacks(body.text || combined),
-    confidence: Math.round((full.confidence + top.confidence + plate.confidence) / 3),
+    stage: extractStage(`${plate.text}\n${top.text}`),
+    regulationMark: extractRegulation(stampText),
+    ability: extractAbility(body.text),
+    attacks: extractAttacks(body.text),
+    confidence: Math.round((stamp.confidence + plate.confidence + top.confidence) / 3),
   };
 }

@@ -175,7 +175,10 @@ export async function prepareForOcr(input: Buffer) {
     throw new Error("Kon de afbeelding niet lezen");
   }
 
-  const cardBox = await detectCardBox(resized, width, height);
+  const alreadyCard = Math.abs(Math.log(width / Math.max(height, 1) / CARD_RATIO)) < 0.08;
+  const cardBox = alreadyCard
+    ? { left: 0, top: 0, width, height }
+    : await detectCardBox(resized, width, height);
   const card = await sharp(resized).extract(cardBox).toBuffer();
   const cardMeta = await sharp(card).metadata();
   const cw = cardMeta.width ?? cardBox.width;
@@ -185,9 +188,9 @@ export async function prepareForOcr(input: Buffer) {
   const nameBox = extractBox(cw, ch, 0.03, 0.03, 0.78, 0.18);
   const illustration = extractBox(cw, ch, 0.07, 0.17, 0.93, 0.58);
   const bodyBox = extractBox(cw, ch, 0.05, 0.46, 0.95, 0.84);
-  const numberBox = extractBox(cw, ch, 0.0, 0.82, 1, 0.99);
-  const footerLeft = extractBox(cw, ch, 0.0, 0.78, 0.56, 1);
-  const idBlock = extractBox(cw, ch, 0.0, 0.86, 0.62, 0.998);
+  const numberBox = extractBox(cw, ch, 0.0, 0.8, 1, 1);
+  const footerLeft = extractBox(cw, ch, 0.0, 0.76, 0.68, 1);
+  const idBlock = extractBox(cw, ch, 0.0, 0.84, 0.7, 1);
   const setSymbol = extractBox(cw, ch, 0.0, 0.8, 0.2, 0.99);
 
   const [full, plate, top, body, bottom, bottomInk, stamp, stampInk, stampInv, art, symbol] = await Promise.all([
@@ -204,7 +207,7 @@ export async function prepareForOcr(input: Buffer) {
       .threshold(148)
       .png()
       .toBuffer(),
-    enhanceNumbers(sharp(card).extract(idBlock).resize({ width: 1100, withoutEnlargement: false })).toBuffer(),
+    enhanceNumbers(sharp(card).extract(idBlock).resize({ width: 1400, withoutEnlargement: false })).toBuffer(),
     sharp(card)
       .extract(footerLeft)
       .resize({ width: 1000, withoutEnlargement: false })

@@ -32,7 +32,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Kaart in het kader, tik de pokéball onderaan");
+  const [hint, setHint] = useState<string | null>("Kaart in het kader, nummer linksonder zichtbaar");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -88,7 +88,7 @@ export function Scanner({ lang, onAdd }: Props) {
       setResult(null);
       setSaved(false);
       setSelectedId(null);
-      setHint("Kaart in het kader, tik de pokéball onderaan");
+      setHint("Kaart in het kader, nummer linksonder zichtbaar");
       return;
     }
 
@@ -178,7 +178,7 @@ export function Scanner({ lang, onAdd }: Props) {
                 setResult(null);
                 setSaved(false);
                 setSelectedId(null);
-                setHint("Kaart in het kader, tik de pokéball onderaan");
+                setHint("Kaart in het kader, nummer linksonder zichtbaar");
               }}
             >
               Opnieuw

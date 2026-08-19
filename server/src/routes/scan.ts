@@ -4,6 +4,7 @@ import { prepareForOcr } from "../services/image.js";
 import { lookupCard } from "../services/lookup.js";
 import { matchCard } from "../services/match.js";
 import { readCardText } from "../services/ocr.js";
+import { setIdForCode } from "../services/setCodes.js";
 import { differenceHash, symbolHash } from "../services/vision.js";
 import { flattenCard } from "../services/warp.js";
 
@@ -39,18 +40,50 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
       symbolHash(regions.symbol),
     ]);
     const extra = await lookupCard(ocr, lang);
-    const matches = await matchCard(
-      ocr,
-      lang,
-      {
-        artHash,
-        cardHash,
-        symbolHash: markHash,
-        queryImage: regions.card,
-        foil: false,
-      },
-      extra,
-    );
+    const stampHits = extra.filter((card) => {
+      if (!ocr.setCode || !ocr.collectorNumber) return false;
+      const setId = setIdForCode(ocr.setCode);
+      const sameNumber =
+        card.localId.replace(/^0+/, "").toLowerCase() ===
+        ocr.collectorNumber.replace(/^0+/, "").toLowerCase();
+      return Boolean(setId && card.set?.id === setId && sameNumber);
+    });
+
+    let matches = stampHits.length
+      ? stampHits.slice(0, 8).map((card) => ({
+          card,
+          score: 90,
+          reasons: ["setcode+nummer"],
+        }))
+      : await matchCard(
+          ocr,
+          lang,
+          {
+            artHash,
+            cardHash,
+            symbolHash: markHash,
+            queryImage: regions.card,
+            foil: false,
+          },
+          extra,
+        );
+
+    if (!matches.length && extra.length) {
+      matches = extra.slice(0, 8).map((card) => ({
+        card,
+        score: 20,
+        reasons: ["catalogus"],
+      }));
+    }
+
+    console.log("scan", {
+      setCode: ocr.setCode,
+      number: ocr.collectorNumber,
+      total: ocr.setTotal,
+      names: ocr.nameCandidates.slice(0, 3),
+      extra: extra.map((card) => card.id).slice(0, 8),
+      matches: matches.map((match) => match.card.id).slice(0, 5),
+    });
 
     res.json({
       matches,

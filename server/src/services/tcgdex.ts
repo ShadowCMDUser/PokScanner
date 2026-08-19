@@ -193,18 +193,7 @@ async function lookupSetIdByAbbreviation(lang: TcgLang, code: string, setTotal?:
 export async function resolveSetId(lang: TcgLang, setCode: string, setTotal?: string | null) {
   const code = setCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const seeded = setIdForCode(code);
-  if (seeded) {
-    if (!setTotal) return seeded;
-    const sets = await listSets(lang);
-    const set = sets.find((item) => item.id === seeded);
-    if (
-      !set ||
-      sameCount(set.cardCount?.official, setTotal) ||
-      sameCount(set.cardCount?.total, setTotal)
-    ) {
-      return seeded;
-    }
-  }
+  if (seeded) return seeded;
   return lookupSetIdByAbbreviation(lang, code, setTotal);
 }
 
@@ -222,6 +211,13 @@ export async function cardsBySetStamp(
     if (card) found.push(card);
   }
   return found;
+}
+
+export async function cardsByLocalId(lang: TcgLang, localId: string): Promise<TcgdexCardBrief[]> {
+  const found = await mapPool(localIdVariants(localId), 3, (local) =>
+    searchCards(lang, { localId: local, itemsPerPage: 40 }),
+  );
+  return uniqueBriefs(found.flat()).slice(0, 40);
 }
 
 export async function cardsByCollector(

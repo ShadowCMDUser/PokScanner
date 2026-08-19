@@ -1,6 +1,7 @@
 import type { OcrResult, ScoredMatch, TcgdexCard, TcgdexCardBrief } from "../types.js";
 import {
   cardsByCollector,
+  cardsByLocalId,
   cardsBySetStamp,
   hydrateCards,
   normalizeLang,
@@ -94,12 +95,7 @@ function scoreCard(
       (sameCount(ocr.setTotal, card.set.cardCount.official) ||
         sameCount(ocr.setTotal, card.set.cardCount.total)),
   );
-  const stampMatch = Boolean(
-    ocr.setCode &&
-      numberMatch &&
-      setIdForCode(ocr.setCode) === card.set?.id &&
-      (!ocr.setTotal || setMatch),
-  );
+  const stampMatch = Boolean(ocr.setCode && numberMatch && setIdForCode(ocr.setCode) === card.set?.id);
 
   if (isPreEvolution(card.name, ocr.evolvesFrom)) {
     return { card, score: 0, reasons: ["voorevolutie"] };
@@ -107,7 +103,8 @@ function scoreCard(
 
   const looksLike = orbScore >= 18 || artScore >= 36;
   const identity = named && numberMatch && setMatch;
-  if (!looksLike && !identity && !stampMatch) {
+  const catalogHit = stampMatch || (numberMatch && setMatch);
+  if (!looksLike && !identity && !catalogHit) {
     return { card, score: 0, reasons: ["geen beeldmatch"] };
   }
 
@@ -133,10 +130,10 @@ function scoreCard(
     reasons.push("naam");
   }
   if (numberMatch && setMatch) {
-    score += 22;
+    score += 40;
     reasons.push("nummer+set");
   } else if (numberMatch) {
-    score += 4;
+    score += 12;
     reasons.push("nummer");
   }
   if (symbolScore >= 42) {
@@ -165,6 +162,8 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
 
   if (ocr.collectorNumber && ocr.setTotal) {
     queries.push(cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal));
+  } else if (ocr.collectorNumber) {
+    queries.push(cardsByLocalId(lang, ocr.collectorNumber));
   }
 
   if (ocr.evolvesFrom && ocr.collectorNumber) {
@@ -258,7 +257,7 @@ export async function matchCard(
       : cards.map(() => 0);
   const orbs = vision?.queryImage ? await orbScores(vision.queryImage, images) : cards.map(() => 0);
 
-  return cards
+  const scored = cards
     .map((card, index) =>
       scoreCard(
         card,
@@ -273,4 +272,19 @@ export async function matchCard(
     .filter((match) => match.score >= 18)
     .sort((a, b) => b.score - a.score)
     .slice(0, 12);
+
+  if (scored.length) return scored;
+
+  if (ocr.collectorNumber) {
+    const numbered = cards.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!));
+    if (numbered.length) {
+      return numbered.slice(0, 8).map((card) => ({
+        card,
+        score: 20,
+        reasons: ["nummer"],
+      }));
+    }
+  }
+
+  return [];
 }

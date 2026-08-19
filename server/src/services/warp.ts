@@ -258,9 +258,15 @@ export async function flattenCard(input: Buffer) {
   let card: Buffer | null = null;
 
   if (quad) {
-    const corners = quad.map((point) => ({
+    const mapped = quad.map((point) => ({
       x: (point.x / probeW) * width,
       y: (point.y / probeH) * height,
+    }));
+    const cx = mapped.reduce((sum, point) => sum + point.x, 0) / 4;
+    const cy = mapped.reduce((sum, point) => sum + point.y, 0) / 4;
+    const corners = mapped.map((point) => ({
+      x: clamp(point.x + (point.x - cx) * 0.05, 0, width - 1),
+      y: clamp(point.y + (point.y - cy) * 0.05, 0, height - 1),
     }));
     card = await warpToSize(source, corners);
   }
