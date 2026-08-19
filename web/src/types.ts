@@ -51,6 +51,8 @@ export type TcgdexCard = {
 export type OcrResult = {
   rawText: string;
   nameCandidates: string[];
+  evolvesFrom: string | null;
+  hp: number | null;
   collectorNumber: string | null;
   setTotal: string | null;
   confidence: number;
@@ -66,6 +68,7 @@ export type ScanResponse = {
   ocr: OcrResult;
   matches: ScoredMatch[];
   bestMatch: ScoredMatch | null;
+  foil?: boolean;
 };
 
 export type CardCondition = "mint" | "nm" | "lp" | "mp" | "hp" | "dmg";

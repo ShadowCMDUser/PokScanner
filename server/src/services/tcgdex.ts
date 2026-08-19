@@ -64,6 +64,8 @@ export async function searchCards(
   filters: {
     name?: string;
     localId?: string;
+    evolveFrom?: string;
+    hp?: number;
     page?: number;
     itemsPerPage?: number;
   },
@@ -73,6 +75,8 @@ export async function searchCards(
     queryString({
       name: filters.name,
       localId: filters.localId,
+      evolveFrom: filters.evolveFrom,
+      hp: filters.hp,
       "pagination:page": filters.page ?? 1,
       "pagination:itemsPerPage": filters.itemsPerPage ?? 40,
       "sort:field": "releaseDate",

@@ -32,9 +32,12 @@ export function formatEur(value: number | null | undefined) {
   }).format(value);
 }
 
-export function trendPrice(card: TcgdexCard) {
+export function trendPrice(card: TcgdexCard, foil = false) {
   const market = card.pricing?.cardmarket;
   if (!market) return null;
+  if (foil) {
+    return market["trend-holo"] ?? market.trend ?? market.avg ?? market.low ?? null;
+  }
   return market.trend ?? market["trend-holo"] ?? market.avg ?? market.low ?? null;
 }
 

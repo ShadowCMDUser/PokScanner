@@ -53,8 +53,74 @@ function grayAt(data: Uint8ClampedArray, w: number, x: number, y: number) {
   return data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
 }
 
-function findCard(ctx: CanvasRenderingContext2D, w: number, h: number): Bounds | null {
-  const { data } = ctx.getImageData(0, 0, w, h);
+const CARD_ASPECT = 63 / 88;
+
+function snapToCard(bounds: Bounds, frameW: number, frameH: number): Bounds {
+  const pxW = bounds.w * frameW;
+  const pxH = bounds.h * frameH;
+  const cx = bounds.x * frameW + pxW / 2;
+  const cy = bounds.y * frameH + pxH / 2;
+  let w = pxW;
+  let h = pxH;
+  if (w / Math.max(h, 1) > CARD_ASPECT) h = w / CARD_ASPECT;
+  else w = h * CARD_ASPECT;
+
+  const scale = Math.min(1, (frameW - 2) / w, (frameH - 2) / h);
+  w *= scale;
+  h *= scale;
+  const x = Math.max(0, Math.min(cx - w / 2, frameW - w));
+  const y = Math.max(0, Math.min(cy - h / 2, frameH - h));
+  return { x: x / frameW, y: y / frameH, w: w / frameW, h: h / frameH };
+}
+
+function boxFromHits(
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  w: number,
+  h: number,
+  padX: number,
+  padY: number,
+): Bounds {
+  const x = Math.max(0, minX - padX) / w;
+  const y = Math.max(0, minY - padY) / h;
+  const right = Math.min(w, maxX + padX) / w;
+  const bottom = Math.min(h, maxY + padY) / h;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+function findBrightCard(data: Uint8ClampedArray, w: number, h: number): Bounds | null {
+  let sum = 0;
+  const count = w * h;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
+  }
+  const thresh = Math.min(210, sum / count + 22);
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  let hits = 0;
+
+  for (let y = 2; y < h - 2; y += 1) {
+    for (let x = 2; x < w - 2; x += 1) {
+      if (grayAt(data, w, x, y) < thresh) continue;
+      hits += 1;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  const boxW = maxX - minX;
+  const boxH = maxY - minY;
+  if (hits < count * 0.1 || boxW < w * 0.28 || boxH < h * 0.28) return null;
+  return boxFromHits(minX, minY, maxX, maxY, w, h, boxW * 0.04, boxH * 0.03);
+}
+
+function findEdgeCard(data: Uint8ClampedArray, w: number, h: number): Bounds | null {
   const mag = new Float32Array(w * h);
   let maxMag = 0;
 
@@ -91,14 +157,24 @@ function findCard(ctx: CanvasRenderingContext2D, w: number, h: number): Bounds |
   const boxW = maxX - minX;
   const boxH = maxY - minY;
   if (hits < 40 || boxW < w * 0.22 || boxH < h * 0.22) return null;
+  return boxFromHits(minX, minY, maxX, maxY, w, h, boxW * 0.06, boxH * 0.05);
+}
 
-  const padX = boxW * 0.08;
-  const padY = boxH * 0.06;
-  const x = Math.max(0, minX - padX) / w;
-  const y = Math.max(0, minY - padY) / h;
-  const right = Math.min(w, maxX + padX) / w;
-  const bottom = Math.min(h, maxY + padY) / h;
-  return { x, y, w: right - x, h: bottom - y };
+function closerToCard(a: Bounds, b: Bounds | null) {
+  if (!b) return a;
+  const score = (box: Bounds) => Math.abs(Math.log(box.w / Math.max(box.h, 0.01) / CARD_ASPECT));
+  return score(a) <= score(b) ? a : b;
+}
+
+function findCard(ctx: CanvasRenderingContext2D, w: number, h: number): Bounds | null {
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const bright = findBrightCard(data, w, h);
+  const edges = findEdgeCard(data, w, h);
+  if (!bright && !edges) return null;
+  const found = closerToCard(bright ?? edges!, edges);
+  const snapped = snapToCard(found, w, h);
+  if (snapped.w < 0.28 || snapped.h < 0.34) return null;
+  return snapped;
 }
 
 function frameStats(ctx: CanvasRenderingContext2D, w: number, h: number, prev: Uint8ClampedArray | null) {
@@ -131,16 +207,16 @@ function toBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-function cardLike(bounds: Bounds, video: HTMLVideoElement) {
-  const aspect = (bounds.w * video.videoWidth) / (bounds.h * video.videoHeight);
-  return aspect > 0.58 && aspect < 0.86 && bounds.w > 0.34 && bounds.h > 0.34;
-}
-
 function isConfident(scan: ScanResponse) {
   const best = scan.bestMatch;
-  if (!best || scan.ocr.nameCandidates.length === 0) return false;
-  if (best.score >= 78) return true;
-  if (best.score >= 64 && scan.ocr.collectorNumber) return true;
+  if (!best) return false;
+  const hasKey =
+    scan.ocr.nameCandidates.length > 0 || Boolean(scan.ocr.evolvesFrom) || Boolean(scan.ocr.collectorNumber);
+  if (!hasKey) return false;
+  const hasArt = best.reasons.some((reason) => reason.startsWith("artwork"));
+  if (hasArt && best.score >= 72) return true;
+  if (best.score >= 88) return true;
+  if (best.score >= 70 && scan.ocr.collectorNumber) return true;
   return false;
 }
 
@@ -157,7 +233,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState("Houd je kaart in beeld");
+  const [hint, setHint] = useState<string | null>("Houd je kaart stil tegen een donkere achtergrond");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -218,15 +294,15 @@ export function Scanner({ lang, onAdd }: Props) {
       if (!video || video.readyState < 2 || !video.videoWidth) return;
 
       const sample = sampleCanvas.current!;
-      const ctx = drawVideo(video, sample, 90, 160);
+      const ctx = drawVideo(video, sample, 108, 192);
       if (!ctx) return;
 
-      const stats = frameStats(ctx, 90, 160, prevFrameRef.current);
+      const stats = frameStats(ctx, 108, 192, prevFrameRef.current);
       prevFrameRef.current = stats.next;
 
       if (stats.variance < 280) {
         stableRef.current = 0;
-        setHint("Houd je kaart in beeld");
+        setHint("Houd je kaart stil tegen een donkere achtergrond");
         return;
       }
       if (stats.motion > 16) {
@@ -235,10 +311,10 @@ export function Scanner({ lang, onAdd }: Props) {
         return;
       }
 
-      const card = findCard(ctx, 90, 160);
+      const card = findCard(ctx, 108, 192);
       if (!card) {
         stableRef.current = 0;
-        setHint("Houd je kaart in beeld");
+        setHint("Houd je kaart stil tegen een donkere achtergrond");
         return;
       }
 
@@ -253,24 +329,10 @@ export function Scanner({ lang, onAdd }: Props) {
       setHint("Kaart herkennen...");
 
       const capture = captureCanvas.current!;
-      const useCrop = cardLike(card, video);
-      const maxW = 1280;
-      if (useCrop) {
-        const width = Math.min(maxW, Math.round(video.videoWidth * card.w));
-        const height = Math.max(
-          160,
-          Math.round(width * ((card.h * video.videoHeight) / Math.max(card.w * video.videoWidth, 1))),
-        );
-        drawVideo(video, capture, width, height, card);
-      } else {
-        const scale = Math.min(1, maxW / video.videoWidth);
-        drawVideo(
-          video,
-          capture,
-          Math.round(video.videoWidth * scale),
-          Math.round(video.videoHeight * scale),
-        );
-      }
+      const crop = snapToCard(card, video.videoWidth, video.videoHeight);
+      const width = Math.min(1200, Math.round(video.videoWidth * crop.w));
+      const height = Math.max(220, Math.round(width / CARD_ASPECT));
+      drawVideo(video, capture, width, height, crop);
 
       void toBlob(capture)
         .then(async (blob) => {
@@ -286,8 +348,13 @@ export function Scanner({ lang, onAdd }: Props) {
 
           const sameAsLast = lastMatchRef.current === best.card.id;
           lastMatchRef.current = best.card.id;
+          const hasArt = best.reasons.some((reason) => reason.startsWith("artwork"));
 
-          if (isConfident(scan) || (sameAsLast && best.score >= 58)) {
+          if (
+            isConfident(scan) ||
+            (sameAsLast && hasArt && best.score >= 58) ||
+            (sameAsLast && best.score >= 80)
+          ) {
             setResult(scan);
             setSelectedId(best.card.id);
             setHint(null);
@@ -315,7 +382,7 @@ export function Scanner({ lang, onAdd }: Props) {
     setResult(null);
     setSaved(false);
     setSelectedId(null);
-    setHint("Houd je kaart in beeld");
+    setHint("Houd je kaart stil tegen een donkere achtergrond");
     cooldownRef.current = Date.now() + 800;
     prevFrameRef.current = null;
     lastMatchRef.current = null;
@@ -358,7 +425,7 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-top">
             <div>
               <h2>Welke kaart?</h2>
-              <p className="muted">Tik de juiste foto</p>
+              <p className="muted">{result.foil ? "Foil gezien · tik de juiste foto" : "Tik de juiste foto"}</p>
             </div>
             <button className="btn ghost btn-sm" onClick={reset}>
               Opnieuw
@@ -390,7 +457,7 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-footer">
             <div className="picker-chosen">
               <strong>{selected.name}</strong>
-              <span className="price">{formatEur(trendPrice(selected))}</span>
+              <span className="price">{formatEur(trendPrice(selected, result.foil))}</span>
             </div>
             <div className="sheet-actions">
               <select

@@ -5,6 +5,12 @@ import {
   searchCards,
   type TcgLang,
 } from "./tcgdex.js";
+import { artworkScores } from "./vision.js";
+
+export type VisionHints = {
+  artHash: bigint;
+  foil: boolean;
+};
 
 function levenshtein(a: string, b: string) {
   const rows = a.length + 1;
@@ -40,10 +46,8 @@ function similarity(a: string, b: string) {
   const right = normalizeName(b);
   if (!left || !right) return 0;
   if (left === right) return 1;
-  if (left.length >= 5 && (right.startsWith(left) || left.startsWith(right))) return 0.92;
-  if (left.length >= 6 && (right.includes(left) || left.includes(right))) return 0.8;
-  const distance = levenshtein(left, right);
-  return 1 - distance / Math.max(left.length, right.length);
+  const ratio = 1 - levenshtein(left, right) / Math.max(left.length, right.length);
+  return ratio >= 0.84 ? ratio : 0;
 }
 
 function bestNameScore(cardName: string, candidates: string[]) {
@@ -54,31 +58,59 @@ function sameLocalId(cardId: string, found: string) {
   return cardId.replace(/^0+/, "").toLowerCase() === found.replace(/^0+/, "").toLowerCase();
 }
 
-function scoreCard(card: TcgdexCard, ocr: OcrResult): ScoredMatch {
+function isPreEvolution(cardName: string, evolvesFrom: string | null) {
+  return Boolean(evolvesFrom && similarity(cardName, evolvesFrom) >= 0.86);
+}
+
+function scoreCard(card: TcgdexCard, ocr: OcrResult, artScore = 0, foil = false): ScoredMatch {
   const reasons: string[] = [];
   let score = 0;
 
+  if (isPreEvolution(card.name, ocr.evolvesFrom)) {
+    return { card, score: 0, reasons: ["voorevolutie"] };
+  }
+
   const nameScore = bestNameScore(card.name, ocr.nameCandidates);
-  if (nameScore >= 0.78) {
+  if (nameScore >= 0.84) {
     score += nameScore * 70;
-    reasons.push(`naam ${Math.round(nameScore * 100)}%`);
-  } else if (nameScore >= 0.62 && ocr.collectorNumber) {
-    score += nameScore * 48;
     reasons.push(`naam ${Math.round(nameScore * 100)}%`);
   }
 
+  if (ocr.evolvesFrom && similarity(card.evolveFrom ?? "", ocr.evolvesFrom) >= 0.84) {
+    score += 50;
+    reasons.push("evolueert van");
+  }
+
   if (ocr.collectorNumber && sameLocalId(card.localId, ocr.collectorNumber)) {
-    score += 32;
-    reasons.push("nummer match");
+    score += 36;
+    reasons.push("nummer");
+  }
+
+  if (ocr.hp && card.hp && Math.abs(card.hp - ocr.hp) <= 10) {
+    score += 10;
+    reasons.push("hp");
   }
 
   if (ocr.setTotal && card.set?.cardCount) {
     const total = String(card.set.cardCount.official ?? "");
     const all = String(card.set.cardCount.total ?? "");
     if (ocr.setTotal === total || ocr.setTotal === all) {
-      score += 16;
-      reasons.push("setgrootte match");
+      score += 18;
+      reasons.push("setgrootte");
     }
+  }
+
+  if (artScore >= 62) {
+    score += Math.round(artScore * 0.9);
+    reasons.push(`artwork ${artScore}%`);
+  } else if (artScore >= 45) {
+    score += Math.round(artScore * 0.45);
+    reasons.push(`artwork ${artScore}%`);
+  }
+
+  if (foil && (card.variants?.holo || card.rarity?.toLowerCase().includes("holo"))) {
+    score += 8;
+    reasons.push("foil");
   }
 
   return { card, score: Math.round(score), reasons };
@@ -89,15 +121,42 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
   const names = ocr.nameCandidates
     .map((name) => name.replace(/[^A-Za-z0-9 '\-]/g, "").trim())
     .filter((name) => name.length >= 3)
+    .filter((name) => !isPreEvolution(name, ocr.evolvesFrom))
     .slice(0, 3);
 
   if (ocr.collectorNumber) {
+    queries.push(searchCards(lang, { localId: ocr.collectorNumber, itemsPerPage: 80 }));
+  }
+
+  if (ocr.evolvesFrom) {
     queries.push(
-      searchCards(lang, { localId: ocr.collectorNumber, itemsPerPage: 50 }),
+      searchCards(lang, {
+        evolveFrom: ocr.evolvesFrom,
+        itemsPerPage: 50,
+      }),
     );
+    if (ocr.collectorNumber) {
+      queries.push(
+        searchCards(lang, {
+          evolveFrom: ocr.evolvesFrom,
+          localId: ocr.collectorNumber,
+          itemsPerPage: 30,
+        }),
+      );
+    }
+    if (ocr.hp) {
+      queries.push(
+        searchCards(lang, {
+          evolveFrom: ocr.evolvesFrom,
+          hp: ocr.hp,
+          itemsPerPage: 30,
+        }),
+      );
+    }
   }
 
   for (const name of names) {
+    queries.push(searchCards(lang, { name, itemsPerPage: 40 }));
     if (ocr.collectorNumber) {
       queries.push(
         searchCards(lang, {
@@ -107,7 +166,6 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
         }),
       );
     }
-    queries.push(searchCards(lang, { name, itemsPerPage: 30 }));
   }
 
   if (!queries.length) return [];
@@ -117,9 +175,11 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
 }
 
 function briefScore(brief: TcgdexCardBrief, ocr: OcrResult) {
+  if (isPreEvolution(brief.name, ocr.evolvesFrom)) return 0;
   let score = bestNameScore(brief.name, ocr.nameCandidates) * 70;
+  if (ocr.evolvesFrom) score += 35;
   if (ocr.collectorNumber && sameLocalId(brief.localId, ocr.collectorNumber)) {
-    score += 32;
+    score += 36;
   }
   return score;
 }
@@ -127,21 +187,32 @@ function briefScore(brief: TcgdexCardBrief, ocr: OcrResult) {
 export async function matchCard(
   ocr: OcrResult,
   langInput?: string,
+  vision?: VisionHints,
 ): Promise<ScoredMatch[]> {
   const lang = normalizeLang(langInput);
   const briefs = await lookupCandidates(ocr, lang);
   if (!briefs.length) return [];
 
-  const ranked = [...new Map(briefs.map((card) => [card.id, card])).values()]
+  const unique = [...new Map(briefs.map((card) => [card.id, card])).values()];
+  const numbered = ocr.collectorNumber
+    ? unique.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!))
+    : [];
+  const byText = unique
     .map((brief) => ({ brief, score: briefScore(brief, ocr) }))
-    .filter((item) => item.score >= 40)
+    .filter((item) => item.score >= 30)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 10)
     .map((item) => item.brief);
 
-  const cards = await hydrateCards(ranked, lang, 10);
+  const ranked = [...new Map([...numbered, ...byText].map((card) => [card.id, card])).values()].slice(
+    0,
+    18,
+  );
+
+  const cards = await hydrateCards(ranked, lang, 18);
+  const visuals = vision ? await artworkScores(vision.artHash, cards.map((card) => card.image)) : cards.map(() => 0);
+
   return cards
-    .map((card) => scoreCard(card, ocr))
+    .map((card, index) => scoreCard(card, ocr, visuals[index] ?? 0, vision?.foil ?? false))
     .filter((match) => match.score >= 40)
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);

@@ -3,6 +3,7 @@ import multer from "multer";
 import { prepareForOcr } from "../services/image.js";
 import { matchCard } from "../services/match.js";
 import { readCardText } from "../services/ocr.js";
+import { differenceHash, readFoilHint } from "../services/vision.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,14 +28,18 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
     }
 
     const lang = typeof req.body?.lang === "string" ? req.body.lang : "en";
+
     const regions = await prepareForOcr(fileBuffer);
     const ocr = await readCardText(regions);
-    const matches = await matchCard(ocr, lang);
+    const artHash = await differenceHash(regions.art);
+    const foil = await readFoilHint(regions.art);
+    const matches = await matchCard(ocr, lang, { artHash, foil });
 
     res.json({
       ocr,
       matches,
       bestMatch: matches[0] ?? null,
+      foil,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan mislukt";

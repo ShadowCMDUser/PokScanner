@@ -70,6 +70,8 @@ export type TcgdexCard = TcgdexCardBrief & {
 export type OcrResult = {
   rawText: string;
   nameCandidates: string[];
+  evolvesFrom: string | null;
+  hp: number | null;
   collectorNumber: string | null;
   setTotal: string | null;
   confidence: number;

@@ -9,6 +9,9 @@ const NAME_NOISE =
 const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '-.";
 const NUMBER_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/ -";
 
+const EVOLVES_FROM =
+  /(?:evolves?\s+from|evolue\s+de|évolue\s+de|entwickelt\s+sich\s+aus)\s+([A-Za-z][A-Za-z '\-]{2,24})/i;
+
 let workerPromise: Promise<Worker> | null = null;
 
 async function getWorker() {
@@ -42,6 +45,22 @@ function tidy(text: string) {
   return text.replace(/[|]/g, "I").replace(/[`´’]/g, "'").replace(/\s+/g, " ").trim();
 }
 
+function extractEvolvesFrom(text: string) {
+  const match = tidy(text).match(EVOLVES_FROM);
+  return match?.[1] ? tidy(match[1]) : null;
+}
+
+function extractHp(text: string) {
+  const match = tidy(text).match(/\b(\d{2,3})\s*HP\b/i);
+  if (!match) return null;
+  const hp = Number(match[1]);
+  return hp >= 30 && hp <= 400 ? hp : null;
+}
+
+function stripEvolvesFrom(text: string) {
+  return tidy(text).replace(EVOLVES_FROM, " ").replace(/\s+/g, " ").trim();
+}
+
 function extractCollector(text: string) {
   const cleaned = tidy(text).replace(/[O]/g, "0").replace(/[Il]/g, "1");
 
@@ -65,6 +84,10 @@ function extractCollector(text: string) {
   return { number: null, total: null };
 }
 
+function sameName(a: string, b: string) {
+  return a.toLowerCase().replace(/[^a-z0-9]/g, "") === b.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function toSearchName(name: string) {
   const cleaned = name
     .replace(/[^A-Za-z0-9 '\-]/g, " ")
@@ -76,9 +99,10 @@ function toSearchName(name: string) {
   return cleaned;
 }
 
-function addName(target: string[], name: string) {
+function addName(target: string[], name: string, blocked?: string | null) {
   const cleaned = toSearchName(name);
   if (!cleaned) return;
+  if (blocked && sameName(cleaned, blocked)) return;
   const variants = [cleaned];
   if (cleaned === cleaned.toUpperCase() && cleaned.length > 3) {
     variants.push(cleaned.toLowerCase().replace(/\b[a-z]/g, (char) => char.toUpperCase()));
@@ -90,39 +114,43 @@ function addName(target: string[], name: string) {
   }
 }
 
-function extractNames(topText: string, fullText: string) {
+function extractNames(plateText: string, topText: string, fullText: string, evolvesFrom: string | null) {
   const names: string[] = [];
-  const top = tidy(topText);
+  const plate = stripEvolvesFrom(plateText);
+  const top = stripEvolvesFrom(topText);
 
-  for (const match of top.matchAll(/([A-Za-z][A-Za-z '\-]{2,24})\s+\d{1,3}\s*HP/gi)) {
-    addName(names, match[1]);
+  for (const match of plate.matchAll(/\b[A-Z]{3,}(?:\s+[A-Z]{2,}){0,2}\b/g)) {
+    addName(names, match[0], evolvesFrom);
+  }
+  for (const match of plate.matchAll(/\b[A-Z][a-z]+(?:[ '\-][A-Z][a-z]+){0,2}(?:\s+(?:ex|EX|V|VMAX|VSTAR|GX))?\b/g)) {
+    addName(names, match[0], evolvesFrom);
   }
 
-  for (const match of top.matchAll(/\b[A-Z]{3,}(?:\s+[A-Z]{2,}){0,3}\b/g)) {
-    addName(names, match[0]);
-  }
-
-  for (const match of top.matchAll(/\b[A-Z][a-z]+(?:[ '\-][A-Z][a-z]+){0,3}(?:\s+(?:ex|EX|V|VMAX|VSTAR|GX))?\b/g)) {
-    addName(names, match[0]);
+  for (const match of top.matchAll(/\b([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})\s+\d{1,3}\s*HP\b/g)) {
+    addName(names, match[1], evolvesFrom);
   }
 
   if (!names.length) {
-    for (const match of tidy(fullText).matchAll(/([A-Za-z][A-Za-z '\-]{2,24})\s+\d{1,3}\s*HP/gi)) {
-      addName(names, match[1]);
+    for (const match of stripEvolvesFrom(fullText).matchAll(/\b([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})\s+\d{1,3}\s*HP\b/g)) {
+      addName(names, match[1], evolvesFrom);
     }
   }
 
-  return names.slice(0, 5);
+  return names.slice(0, 4);
 }
 
 export async function readCardText(regions: {
   full: Buffer;
+  plate?: Buffer;
   top: Buffer;
   bottom: Buffer;
   bottomInk?: Buffer;
 }): Promise<OcrResult> {
-  const [top, bottom, bottomInk, full] = await Promise.all([
-    recognize(regions.top, PSM.SINGLE_LINE, NAME_CHARS),
+  const [plate, top, bottom, bottomInk, full] = await Promise.all([
+    regions.plate
+      ? recognize(regions.plate, PSM.SINGLE_LINE, NAME_CHARS)
+      : Promise.resolve({ text: "", confidence: 0 }),
+    recognize(regions.top, PSM.SINGLE_BLOCK, NAME_CHARS),
     recognize(regions.bottom, PSM.SINGLE_LINE, NUMBER_CHARS),
     regions.bottomInk
       ? recognize(regions.bottomInk, PSM.SINGLE_LINE, NUMBER_CHARS)
@@ -130,15 +158,18 @@ export async function readCardText(regions: {
     recognize(regions.full, PSM.SPARSE_TEXT, NAME_CHARS),
   ]);
 
-  const combined = `${top.text}\n${full.text}\n${bottom.text}\n${bottomInk.text}`;
+  const combined = `${plate.text}\n${top.text}\n${full.text}\n${bottom.text}\n${bottomInk.text}`;
+  const evolvesFrom = extractEvolvesFrom(combined);
   const collector = extractCollector(`${bottom.text}\n${bottomInk.text}\n${full.text}`);
-  const names = extractNames(top.text, full.text);
+  const names = extractNames(plate.text, top.text, full.text, evolvesFrom);
 
   return {
     rawText: combined.replace(/\n{2,}/g, "\n").trim(),
     nameCandidates: names,
+    evolvesFrom,
+    hp: extractHp(`${plate.text}\n${top.text}\n${full.text}`),
     collectorNumber: collector.number,
     setTotal: collector.total,
-    confidence: Math.round((full.confidence + top.confidence) / 2),
+    confidence: Math.round((full.confidence + top.confidence + plate.confidence) / 3),
   };
 }
