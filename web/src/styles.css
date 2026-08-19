@@ -252,18 +252,29 @@ img {
   display: none;
 }
 
-.stamp-guide {
+.card-guide {
   position: absolute;
   left: 50%;
-  top: 44%;
+  top: 46%;
   z-index: 2;
-  width: min(90vw, 360px);
-  aspect-ratio: 3.3 / 1;
+  width: min(78vw, 320px);
+  aspect-ratio: 63 / 88;
   transform: translate(-50%, -50%);
-  border: 2px solid rgba(255, 255, 255, 0.7);
-  border-radius: 12px;
-  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.38);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
   pointer-events: none;
+}
+
+.stamp-spot {
+  position: absolute;
+  left: 3%;
+  bottom: 2.5%;
+  width: 52%;
+  height: 10%;
+  border: 2px solid #f5d76e;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .scan-hint {

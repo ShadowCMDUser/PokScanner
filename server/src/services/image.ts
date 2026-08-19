@@ -1,5 +1,7 @@
 import sharp from "sharp";
 
+const CARD_RATIO = 63 / 88;
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -19,41 +21,37 @@ function extractBox(
   return { left, top, width: right - left, height: bottom - top };
 }
 
-function stampPipeline(input: Buffer, height = 240) {
-  return sharp(input).rotate().resize({ height, withoutEnlargement: false });
+async function stampOnly(input: Buffer) {
+  const resized = await sharp(input)
+    .rotate()
+    .resize({ width: 1400, height: 1400, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+  const { width, height } = await sharp(resized).metadata();
+  if (!width || !height) return resized;
+
+  const ratio = width / Math.max(height, 1);
+  const looksLikeCard = Math.abs(Math.log(ratio / CARD_RATIO)) < 0.18;
+  if (!looksLikeCard && ratio > 1.8) return resized;
+
+  return sharp(resized)
+    .extract(extractBox(width, height, 0.0, 0.90, 0.50, 1))
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
+
+function scale(input: Buffer, height: number) {
+  return sharp(input).resize({ height, withoutEnlargement: false });
 }
 
 export async function prepareStamp(input: Buffer) {
+  const stamp = await stampOnly(input);
+
   const [contrast, inv, ink, digits] = await Promise.all([
-    stampPipeline(input)
-      .greyscale()
-      .normalize()
-      .linear(1.3, -16)
-      .sharpen({ sigma: 1.5 })
-      .png()
-      .toBuffer(),
-    stampPipeline(input)
-      .greyscale()
-      .normalize()
-      .negate()
-      .threshold(155)
-      .png()
-      .toBuffer(),
-    stampPipeline(input)
-      .greyscale()
-      .normalize()
-      .negate()
-      .sharpen({ sigma: 1.6 })
-      .png()
-      .toBuffer(),
-    stampPipeline(input, 220)
-      .greyscale()
-      .normalize()
-      .negate()
-      .blur(0.9)
-      .threshold(148)
-      .png()
-      .toBuffer(),
+    scale(stamp, 260).greyscale().normalize().linear(1.25, -12).sharpen({ sigma: 1.4 }).png().toBuffer(),
+    scale(stamp, 260).greyscale().normalize().negate().threshold(150).png().toBuffer(),
+    scale(stamp, 260).greyscale().normalize().negate().sharpen({ sigma: 1.6 }).png().toBuffer(),
+    scale(stamp, 220).greyscale().normalize().negate().blur(1).threshold(146).png().toBuffer(),
   ]);
 
   return { contrast, ink, inv, digits };

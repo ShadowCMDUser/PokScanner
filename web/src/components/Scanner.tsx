@@ -69,7 +69,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Zet het nummerblok in het kader");
+  const [hint, setHint] = useState<string | null>("Kaart in het kader, gele vak linksonder");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -126,7 +126,7 @@ export function Scanner({ lang, onAdd }: Props) {
       setResult(null);
       setSaved(false);
       setSelectedId(null);
-      setHint("Zet het nummerblok in het kader");
+      setHint("Kaart in het kader, gele vak linksonder");
       return;
     }
 
@@ -154,7 +154,7 @@ export function Scanner({ lang, onAdd }: Props) {
         if (!blob) throw new Error("Kon geen foto maken");
         const scan = await scanCard(blob, langRef.current);
         if (!scan.matches.length || !scan.bestMatch) {
-          setHint("Geen match. Vul het kader met het nummer linksonder.");
+          setHint("Geen match. Houd het gele vak op het nummer.");
           return;
         }
         setResult(scan);
@@ -189,7 +189,11 @@ export function Scanner({ lang, onAdd }: Props) {
       <div className={`viewfinder${needsCamera ? " needs-cam" : ""}`}>
         <video ref={videoRef} playsInline muted autoPlay />
         <div className="vignette" />
-        {!result && !needsCamera && <div className="stamp-guide" ref={guideRef} />}
+        {!result && !needsCamera && (
+          <div className="card-guide" ref={guideRef}>
+            <span className="stamp-spot" />
+          </div>
+        )}
 
         {needsCamera && (
           <div className="cam-empty">
@@ -224,7 +228,7 @@ export function Scanner({ lang, onAdd }: Props) {
                 setResult(null);
                 setSaved(false);
                 setSelectedId(null);
-                setHint("Zet het nummerblok in het kader");
+                setHint("Kaart in het kader, gele vak linksonder");
               }}
             >
               Opnieuw
