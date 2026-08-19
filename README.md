@@ -27,6 +27,17 @@ Open daarna [http://localhost:5173](http://localhost:5173).
 
 Tips voor betere herkenning: recht van boven, weinig glare op holo’s, collectornummer onderaan leesbaar. Kaarttaal (EN/FR/DE/ES/IT) stel je in via de selector bovenin.
 
+## Deploy (Dokploy + Nixpacks)
+
+De repo bevat `nixpacks.toml`. In Dokploy:
+
+1. Builder: **Nixpacks**
+2. Healthcheck: `/api/health`
+3. Poort: laat Dokploy `PORT` zetten (de app luistert op `0.0.0.0`)
+4. Persistent volume (aanbevolen): mount naar `/app/data` zodat collectie en OCR-cache bewaard blijven
+
+Geen API-keys nodig. De container heeft internet nodig (TCGdex + eerste Tesseract-download). Voor scans mag de reverse-proxy uploadlimiet 20MB zijn.
+
 ## Scripts
 
 | Commando | Wat het doet |

@@ -1,11 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CardCondition, CollectionEntry, CollectionStore, TcgdexCard } from "./types.js";
+import { dataDir } from "./paths.js";
 import { cardImageUrl, trendPriceEur } from "./services/tcgdex.js";
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "data");
 const storePath = join(dataDir, "collection.json");
 
 function emptyStore(): CollectionStore {

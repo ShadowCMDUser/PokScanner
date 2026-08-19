@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { createWorker, PSM, type Worker } from "tesseract.js";
+import { dataDir } from "../paths.js";
 import type { OcrResult } from "../types.js";
 
 const NAME_NOISE =
@@ -11,6 +13,7 @@ async function getWorker() {
     workerPromise = (async () => {
       const worker = await createWorker("eng", 1, {
         logger: () => undefined,
+        cachePath: join(dataDir, "tesscache"),
       });
       return worker;
     })();
