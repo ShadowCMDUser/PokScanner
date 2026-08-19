@@ -163,6 +163,9 @@ function extractCollector(text: string) {
   for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\:\-](\d{2,3})/g)) {
     add(match[1], match[2], 3);
   }
+  for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{2,3})7(\d{2,3})/g)) {
+    add(match[1], match[2], 5);
+  }
   for (const match of cleaned.matchAll(/\b([A-Z]{1,3}\d{1,3})\s*[\/\\:\-]\s*(\d{2,4})\b/g)) {
     pairs.push({ number: match[1], total: digits(match[2]), score: 12 });
   }
@@ -184,25 +187,23 @@ export function extractSetCode(text: string) {
   const compact = upper.replace(/[^A-Z0-9\/]/g, "");
 
   for (const code of knownCodesByLength()) {
-    if (CODE_NOISE.has(code) || PRINT_LANG.test(code)) continue;
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
     const besideNumber = new RegExp(
-      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?(?:[A-Z]{1,3})?\\d{1,3}\\/\\d{2,4}`,
+      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?(?:[A-Z]{0,3})?\\d{1,3}[\\/7]\\d{2,4}`,
     );
     if (besideNumber.test(compact)) return code;
+    const nearby = compact.indexOf(code);
+    if (nearby >= 0 && /\d/.test(compact.slice(nearby + code.length, nearby + code.length + 10))) {
+      return code;
+    }
   }
 
   const nextToNumber = upper.match(
-    /\b([A-Z0-9]{2,5})\s*(?:EN|FR|DE|ES|IT|PT|NL|JP)?\s*(?:\d{1,3}|[A-Z]{1,3}\d{1,3})\s*[\/\\]\s*\d{2,4}\b/,
+    /\b([A-Z0-9]{2,5})\s*(?:EN|FR|DE|ES|IT|PT|NL|JP)?\s*(?:\d{1,3}|[A-Z]{1,3}\d{1,3})\s*[\/\\7]\s*\d{2,4}\b/,
   );
   if (nextToNumber?.[1]) {
     const code = resolvePrintedCode(nextToNumber[1]);
     if (code) return code;
-  }
-
-  for (const code of knownCodesByLength()) {
-    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
-    const token = new RegExp(`(?<![A-Z0-9])${code}(?![A-Z0-9])`);
-    if (token.test(upper)) return code;
   }
 
   return null;
@@ -336,8 +337,6 @@ export async function readStamp(regions: {
   contrast: Buffer;
   ink: Buffer;
   inv: Buffer;
-  wide: Buffer;
-  wideInk: Buffer;
 }): Promise<StampId> {
   const stamp: StampId = {
     setCode: null,
@@ -351,9 +350,6 @@ export async function readStamp(regions: {
     { image: regions.contrast, psm: PSM.SPARSE_TEXT },
     { image: regions.inv, psm: PSM.SPARSE_TEXT },
     { image: regions.ink, psm: PSM.SPARSE_TEXT },
-    { image: regions.contrast, psm: PSM.SINGLE_BLOCK },
-    { image: regions.wide, psm: PSM.SPARSE_TEXT },
-    { image: regions.wideInk, psm: PSM.SPARSE_TEXT },
   ];
 
   for (const pass of passes) {

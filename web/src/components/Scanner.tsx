@@ -24,8 +24,45 @@ function toBlob(canvas: HTMLCanvasElement) {
   });
 }
 
+function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement) {
+  const v = video.getBoundingClientRect();
+  const g = guide.getBoundingClientRect();
+  const videoRatio = video.videoWidth / video.videoHeight;
+  const elemRatio = v.width / Math.max(v.height, 1);
+  let renderW = v.width;
+  let renderH = v.height;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (videoRatio > elemRatio) {
+    renderH = v.height;
+    renderW = renderH * videoRatio;
+    offsetX = (v.width - renderW) / 2;
+  } else {
+    renderW = v.width;
+    renderH = renderW / videoRatio;
+    offsetY = (v.height - renderH) / 2;
+  }
+  const scaleX = video.videoWidth / renderW;
+  const scaleY = video.videoHeight / renderH;
+  const pad = 0.03;
+  let sx = (g.left - v.left - offsetX) * scaleX;
+  let sy = (g.top - v.top - offsetY) * scaleY;
+  let sw = g.width * scaleX;
+  let sh = g.height * scaleY;
+  sx -= sw * pad;
+  sy -= sh * pad;
+  sw += sw * pad * 2;
+  sh += sh * pad * 2;
+  sx = Math.max(0, Math.min(sx, video.videoWidth - 8));
+  sy = Math.max(0, Math.min(sy, video.videoHeight - 8));
+  sw = Math.max(8, Math.min(sw, video.videoWidth - sx));
+  sh = Math.max(8, Math.min(sh, video.videoHeight - sy));
+  return { sx, sy, sw, sh };
+}
+
 export function Scanner({ lang, onAdd }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const guideRef = useRef<HTMLDivElement>(null);
   const captureCanvas = useRef<HTMLCanvasElement | null>(null);
   const langRef = useRef(lang);
   const { register } = useScanAction();
@@ -53,8 +90,8 @@ export function Scanner({ lang, onAdd }: Props) {
       .getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
         },
         audio: false,
       })
@@ -82,6 +119,7 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const capture = useCallback(() => {
     const video = videoRef.current;
+    const guide = guideRef.current;
     if (!video || scanning || video.readyState < 2 || !video.videoWidth) return;
 
     if (result) {
@@ -94,11 +132,19 @@ export function Scanner({ lang, onAdd }: Props) {
 
     captureCanvas.current ??= document.createElement("canvas");
     const canvas = captureCanvas.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0);
+
+    if (guide) {
+      const { sx, sy, sw, sh } = coverSourceRect(video, guide);
+      canvas.width = Math.max(720, Math.round(sw));
+      canvas.height = Math.round((canvas.width * sh) / sw);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    } else {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+    }
 
     setScanning(true);
     setHint("Kaart herkennen...");
@@ -143,7 +189,7 @@ export function Scanner({ lang, onAdd }: Props) {
       <div className={`viewfinder${needsCamera ? " needs-cam" : ""}`}>
         <video ref={videoRef} playsInline muted autoPlay />
         <div className="vignette" />
-        {!result && !needsCamera && <div className="card-guide" />}
+        {!result && !needsCamera && <div className="card-guide" ref={guideRef} />}
 
         {needsCamera && (
           <div className="cam-empty">

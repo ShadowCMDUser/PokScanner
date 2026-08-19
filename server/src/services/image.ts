@@ -176,41 +176,31 @@ export async function prepareStamp(input: Buffer) {
   const cw = cardMeta.width ?? cardBox.width;
   const ch = cardMeta.height ?? cardBox.height;
 
-  const tight = extractBox(cw, ch, 0.0, 0.84, 0.72, 1);
-  const strip = extractBox(cw, ch, 0.0, 0.8, 1, 1);
+  const line = extractBox(cw, ch, 0.0, 0.888, 0.64, 0.968);
 
-  const [contrast, ink, inv, wide, wideInk] = await Promise.all([
-    enhanceNumbers(sharp(card).extract(tight).resize({ width: 1400, withoutEnlargement: false })).toBuffer(),
+  const [contrast, ink, inv] = await Promise.all([
+    enhanceNumbers(sharp(card).extract(line).resize({ height: 200, withoutEnlargement: false })).toBuffer(),
     sharp(card)
-      .extract(tight)
-      .resize({ width: 1400, withoutEnlargement: false })
+      .extract(line)
+      .resize({ height: 200, withoutEnlargement: false })
       .greyscale()
       .normalize()
-      .linear(1.45, -28)
-      .threshold(150)
+      .linear(1.5, -32)
+      .threshold(152)
       .png()
       .toBuffer(),
     sharp(card)
-      .extract(tight)
-      .resize({ width: 1400, withoutEnlargement: false })
+      .extract(line)
+      .resize({ height: 200, withoutEnlargement: false })
       .greyscale()
       .normalize()
       .negate()
-      .threshold(168)
-      .png()
-      .toBuffer(),
-    enhanceNumbers(sharp(card).extract(strip).resize({ width: 1400, withoutEnlargement: false })).toBuffer(),
-    sharp(card)
-      .extract(strip)
-      .resize({ width: 1400, withoutEnlargement: false })
-      .greyscale()
-      .normalize()
-      .threshold(148)
+      .threshold(170)
       .png()
       .toBuffer(),
   ]);
 
-  return { contrast, ink, inv, wide, wideInk };
+  return { contrast, ink, inv };
 }
 
 export async function extractIllustration(input: Buffer) {
