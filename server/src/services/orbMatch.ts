@@ -105,7 +105,7 @@ function inliersFor(cv: OpenCv, catalog: OrbPack, query: OrbPack) {
     const dst = cv.matFromArray(dstPts.length / 2, 1, cv.CV_32FC2, dstPts);
     const mask = new cv.Mat();
     try {
-      const method = cv.USAC_MAGSAC ?? cv.RANSAC;
+      const method = Number((cv as unknown as Record<string, unknown>).USAC_MAGSAC ?? cv.RANSAC);
       const homography = cv.findHomography(src, dst, method, RANSAC_REPROJ, mask);
       if (homography.empty()) return 0;
       homography.delete();
