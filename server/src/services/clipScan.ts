@@ -1,7 +1,6 @@
 import type { OcrResult, ScoredMatch, TcgdexCard } from "../types.js";
 import {
   getCardOrNull,
-  hydrateCards,
   normalizeLang,
   searchCards,
   type TcgLang,
@@ -9,12 +8,16 @@ import {
 
 const SCANNER_API =
   process.env.SCANNER_API_URL ?? "https://shreyshingala-pokemon-scanner-api.hf.space";
+const MIN_SIMILARITY = 0.7;
 
 type ClipMatch = {
   rank?: number;
   card_name: string;
   card_path?: string;
   similarity: number;
+  card_id?: string;
+  set_name?: string;
+  card_number?: string;
 };
 
 type ClipScanResponse = {
@@ -25,12 +28,19 @@ type ClipScanResponse = {
     hp?: string | number;
     card_number?: string;
   };
-  best_match?: ClipMatch & {
-    card_id?: string;
-    set_name?: string;
-    card_number?: string;
-  };
+  best_match?: ClipMatch;
   top_matches?: ClipMatch[];
+};
+
+type PokeTcgCard = {
+  id: string;
+  name: string;
+  number: string;
+  hp?: string;
+  rarity?: string;
+  types?: string[];
+  images?: { small?: string; large?: string };
+  set?: { id: string; name: string; printedTotal?: number; total?: number };
 };
 
 export type ClipLookup = {
@@ -40,6 +50,21 @@ export type ClipLookup = {
 
 function unique<T>(items: T[]) {
   return [...new Set(items)];
+}
+
+function normalize(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function namesAlign(left: string, right: string) {
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
 }
 
 function expandSetId(set: string) {
@@ -81,38 +106,82 @@ export function parseClipFilename(filename: string) {
   };
 }
 
+function toCardFromPoke(data: PokeTcgCard): TcgdexCard {
+  return {
+    id: data.id,
+    localId: data.number,
+    name: data.name,
+    image: data.images?.large ?? data.images?.small,
+    rarity: data.rarity,
+    hp: data.hp ? Number(data.hp) : undefined,
+    types: data.types,
+    set: data.set
+      ? {
+          id: data.set.id,
+          name: data.set.name,
+          cardCount: {
+            official: data.set.printedTotal,
+            total: data.set.total,
+          },
+        }
+      : undefined,
+  };
+}
+
+async function fetchPokeTcg(id: string) {
+  const response = await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(id)}`, {
+    headers: process.env.POKEMONTCG_API_KEY
+      ? { "X-Api-Key": process.env.POKEMONTCG_API_KEY }
+      : undefined,
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) return null;
+  const body = (await response.json()) as { data?: PokeTcgCard };
+  return body.data ?? null;
+}
+
 async function resolveTcgdexCard(
   parsed: NonNullable<ReturnType<typeof parseClipFilename>>,
   lang: TcgLang,
-): Promise<TcgdexCard | null> {
+) {
   const found = await Promise.all(
-    idCandidates(parsed.set, parsed.number).map(async (id) => ({
-      id,
-      card: await getCardOrNull(id, lang),
-    })),
+    idCandidates(parsed.set, parsed.number).map(async (id) => getCardOrNull(id, lang)),
   );
-  const exact = found.find((item) => item.card)?.card;
+  const exact = found.find(
+    (card) => card && namesAlign(card.name, parsed.name),
+  );
   if (exact) return exact;
 
   const localId = parsed.number.replace(/^0+/, "") || parsed.number;
-  const nameQuery = parsed.name.replace(/[_-]+/g, " ").trim();
-  if (nameQuery.length < 2) return null;
-
   const briefs = await searchCards(lang, {
-    name: nameQuery.split(" ")[0],
+    name: parsed.name,
     localId,
     itemsPerPage: 30,
     sortOrder: "DESC",
   });
-  const match =
-    briefs.find((card) => card.id.toLowerCase().includes(parsed.set.toLowerCase())) ??
-    briefs.find((card) => card.name.toLowerCase().includes(nameQuery.toLowerCase().split(" ")[0])) ??
-    briefs[0];
+  const match = briefs.find((card) => namesAlign(card.name, parsed.name));
   if (!match) return null;
-  return (await getCardOrNull(match.id, lang)) ?? {
-    ...match,
-    pricing: { cardmarket: {} },
-  };
+  const hydrated = await getCardOrNull(match.id, lang);
+  return hydrated && namesAlign(hydrated.name, parsed.name) ? hydrated : null;
+}
+
+async function resolveMatch(
+  parsed: NonNullable<ReturnType<typeof parseClipFilename>>,
+  lang: TcgLang,
+) {
+  const [poke, tcgdex] = await Promise.all([
+    fetchPokeTcg(parsed.pokeId),
+    resolveTcgdexCard(parsed, lang),
+  ]);
+
+  if (tcgdex) {
+    return {
+      ...tcgdex,
+      image: poke?.images?.large ?? poke?.images?.small ?? tcgdex.image,
+    } satisfies TcgdexCard;
+  }
+  if (poke) return toCardFromPoke(poke);
+  return null;
 }
 
 export async function wakeupScanner() {
@@ -136,28 +205,28 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
 
   const payload = (await response.json().catch(() => ({}))) as ClipScanResponse;
   if (!response.ok) {
-    const message = payload.error || `Scanner gaf ${response.status} terug`;
-    throw new Error(message);
+    throw new Error(payload.error || `Scanner gaf ${response.status} terug`);
   }
 
-  const rawMatches = [
-    payload.best_match,
-    ...(payload.top_matches ?? []),
-  ].filter((match): match is ClipMatch => Boolean(match?.card_name));
+  const rawMatches = [payload.best_match, ...(payload.top_matches ?? [])].filter(
+    (match): match is ClipMatch => Boolean(match?.card_name),
+  );
 
   const seen = new Set<string>();
   const parsed = rawMatches.flatMap((match) => {
+    if ((match.similarity ?? 0) < MIN_SIMILARITY) return [];
     const info = parseClipFilename(match.card_name);
     if (!info || seen.has(info.pokeId)) return [];
     seen.add(info.pokeId);
     return [{ info, similarity: match.similarity ?? 0 }];
   });
 
+  const ocrName = payload.card_info?.name ?? parsed[0]?.info.name ?? "";
   const resolved = await Promise.all(
     parsed.slice(0, 8).map(async ({ info, similarity }) => {
-      const card = await resolveTcgdexCard(info, lang);
+      const card = await resolveMatch(info, lang);
       if (!card) return null;
-      const score = Math.round(Math.max(0, Math.min(1, similarity)) * 100);
+      const score = Math.round(similarity * 100);
       return {
         card,
         score,
@@ -167,25 +236,18 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
   );
 
   let matches = resolved.filter((match): match is ScoredMatch => Boolean(match));
-  if (!matches.length && parsed[0]) {
-    const briefs = await searchCards(lang, {
-      name: parsed[0].info.name.split(" ")[0],
-      itemsPerPage: 8,
-      sortOrder: "DESC",
-    });
-    const cards = await hydrateCards(briefs, lang, 6);
-    matches = cards.map((card, index) => ({
-      card,
-      score: Math.max(40, Math.round((parsed[0]?.similarity ?? 0.5) * 100) - index * 4),
-      reasons: ["clip fallback"],
-    }));
+  if (ocrName) {
+    const named = matches.filter((match) => namesAlign(match.card.name, ocrName));
+    if (named.length) {
+      const rest = matches.filter((match) => !named.includes(match));
+      matches = [...named, ...rest];
+    }
   }
 
-  const name = payload.card_info?.name ?? parsed[0]?.info.name ?? "";
   const hpValue = Number(payload.card_info?.hp);
   const ocr: OcrResult = {
-    rawText: name,
-    nameCandidates: name ? [name] : parsed[0]?.info.name ? [parsed[0].info.name] : [],
+    rawText: ocrName,
+    nameCandidates: ocrName ? [ocrName] : [],
     evolvesFrom: null,
     hp: Number.isFinite(hpValue) ? hpValue : null,
     collectorNumber: payload.card_info?.card_number ?? parsed[0]?.info.number ?? null,
