@@ -2,7 +2,6 @@ import type { OcrResult, ScoredMatch, TcgdexCard, TcgdexCardBrief } from "../typ
 import {
   cardsByCollector,
   hydrateCards,
-  localIdVariants,
   normalizeLang,
   searchAllCards,
   searchCards,
@@ -84,23 +83,8 @@ function scoreCard(
   foil = false,
 ): ScoredMatch {
   const reasons: string[] = [];
-  let score = 0;
-
-  if (isPreEvolution(card.name, ocr.evolvesFrom)) {
-    return { card, score: 0, reasons: ["voorevolutie"] };
-  }
-
   const nameScore = bestNameScore(card.name, ocr.nameCandidates);
-  if (nameScore >= 0.84) {
-    score += 32;
-    reasons.push("naam");
-  }
-
-  if (ocr.evolvesFrom && similarity(card.evolveFrom ?? "", ocr.evolvesFrom) >= 0.84) {
-    score += 18;
-    reasons.push("evolueert van");
-  }
-
+  const named = nameScore >= 0.84;
   const numberMatch = Boolean(ocr.collectorNumber && sameLocalId(card.localId, ocr.collectorNumber));
   const setMatch = Boolean(
     ocr.setTotal &&
@@ -109,55 +93,46 @@ function scoreCard(
         sameCount(ocr.setTotal, card.set.cardCount.total)),
   );
 
-  if (numberMatch && setMatch) {
-    score += 90;
-    reasons.push("nummer+set");
-  } else if (numberMatch) {
-    score += 16;
-    reasons.push("nummer");
-  } else if (setMatch) {
-    score += 14;
-    reasons.push("setgrootte");
+  if (isPreEvolution(card.name, ocr.evolvesFrom)) {
+    return { card, score: 0, reasons: ["voorevolutie"] };
   }
 
-  if (symbolScore >= 42) {
-    score += Math.round(symbolScore * 1.35);
-    reasons.push("setsymbool");
-  } else if (symbolScore >= 30) {
-    score += Math.round(symbolScore * 0.7);
-    reasons.push("setsymbool");
+  const looksLike = orbScore >= 18 || artScore >= 36;
+  const identity = named && numberMatch && setMatch;
+  if (!looksLike && !identity) {
+    return { card, score: 0, reasons: ["geen beeldmatch"] };
   }
 
-  if (ocr.hp && card.hp && Math.abs(card.hp - ocr.hp) <= 10) {
-    score += 8;
-    reasons.push("hp");
-  }
-
-  if (ocr.illustrator && card.illustrator && similarity(card.illustrator, ocr.illustrator) >= 0.8) {
-    score += 14;
-    reasons.push("illustrator");
-  }
-
-  if (artScore >= 40) {
-    score += Math.round(artScore * 1.5);
-    reasons.push("artwork");
-  } else if (artScore >= 28) {
-    score += Math.round(artScore * 0.8);
-    reasons.push("artwork");
-  }
-
-  if (layoutScore >= 40) {
-    score += Math.round(layoutScore * 0.8);
-    reasons.push("layout");
-  }
-
+  let score = 0;
   if (orbScore >= 18) {
-    score += Math.round(orbScore * 2.2);
+    score += Math.round(orbScore * 3);
     reasons.push("orb");
   }
-
+  if (artScore >= 36) {
+    score += artScore;
+    reasons.push("artwork");
+  }
+  if (layoutScore >= 48) {
+    score += Math.round(layoutScore * 0.35);
+    reasons.push("layout");
+  }
+  if (named) {
+    score += 8;
+    reasons.push("naam");
+  }
+  if (numberMatch && setMatch) {
+    score += 22;
+    reasons.push("nummer+set");
+  } else if (numberMatch) {
+    score += 4;
+    reasons.push("nummer");
+  }
+  if (symbolScore >= 42) {
+    score += Math.round(symbolScore * 0.4);
+    reasons.push("setsymbool");
+  }
   if (foil && (card.variants?.holo || card.rarity?.toLowerCase().includes("holo"))) {
-    score += 6;
+    score += 4;
     reasons.push("foil");
   }
 
@@ -170,42 +145,24 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
     .map((name) => name.replace(/[^A-Za-z0-9 '\-]/g, "").trim())
     .filter((name) => name.length >= 3)
     .filter((name) => !isPreEvolution(name, ocr.evolvesFrom))
-    .slice(0, 3);
+    .slice(0, 2);
 
   if (ocr.collectorNumber && ocr.setTotal) {
     queries.push(cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal));
   }
 
-  if (ocr.collectorNumber) {
-    for (const localId of localIdVariants(ocr.collectorNumber)) {
-      queries.push(searchCards(lang, { localId, itemsPerPage: 100 }));
-    }
-  }
-
-  if (ocr.evolvesFrom) {
-    queries.push(searchAllCards(lang, { evolveFrom: ocr.evolvesFrom }, 200));
-    if (ocr.collectorNumber) {
-      queries.push(
-        searchCards(lang, {
-          evolveFrom: ocr.evolvesFrom,
-          localId: ocr.collectorNumber,
-          itemsPerPage: 30,
-        }),
-      );
-    }
-    if (ocr.hp) {
-      queries.push(
-        searchCards(lang, {
-          evolveFrom: ocr.evolvesFrom,
-          hp: ocr.hp,
-          itemsPerPage: 30,
-        }),
-      );
-    }
+  if (ocr.evolvesFrom && ocr.collectorNumber) {
+    queries.push(
+      searchCards(lang, {
+        evolveFrom: ocr.evolvesFrom,
+        localId: ocr.collectorNumber,
+        itemsPerPage: 30,
+      }),
+    );
   }
 
   for (const name of names) {
-    queries.push(searchAllCards(lang, { name }, 200));
+    queries.push(searchAllCards(lang, { name }, 80));
     if (ocr.collectorNumber) {
       queries.push(
         searchCards(lang, {
@@ -215,13 +172,6 @@ async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
         }),
       );
     }
-    if (ocr.hp) {
-      queries.push(searchAllCards(lang, { name, hp: ocr.hp }, 80));
-    }
-  }
-
-  if (ocr.illustrator) {
-    queries.push(searchCards(lang, { illustrator: ocr.illustrator, itemsPerPage: 40 }));
   }
 
   if (!queries.length) return [];
@@ -243,30 +193,33 @@ export async function matchCard(
   ocr: OcrResult,
   langInput?: string,
   vision?: VisionHints,
+  extraCards: TcgdexCard[] = [],
 ): Promise<ScoredMatch[]> {
   const lang = normalizeLang(langInput);
   const briefs = await lookupCandidates(ocr, lang);
-  if (!briefs.length) return [];
+  const unique = [
+    ...new Map(
+      [...extraCards, ...briefs].map((card) => [card.id, card] as const),
+    ).values(),
+  ];
+  if (!unique.length) return [];
 
-  const unique = [...new Map(briefs.map((card) => [card.id, card])).values()];
   const stamped =
     ocr.collectorNumber && ocr.setTotal
       ? unique.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!))
       : [];
-  const numbered = ocr.collectorNumber
-    ? unique.filter((card) => sameLocalId(card.localId, ocr.collectorNumber!))
-    : [];
   const byText = unique
     .map((brief) => ({ brief, score: briefScore(brief, ocr) }))
     .filter((item) => item.score >= 30)
     .sort((a, b) => b.score - a.score)
     .map((item) => item.brief);
 
-  const ranked = [
-    ...new Map([...stamped, ...numbered, ...byText].map((card) => [card.id, card])).values(),
-  ].slice(0, 80);
+  const ranked = [...new Map([...stamped, ...byText, ...unique].map((card) => [card.id, card])).values()].slice(
+    0,
+    40,
+  );
 
-  const cards = await hydrateCards(ranked, lang, 36);
+  const cards = await hydrateCards(ranked, lang, 28);
   const images = cards.map((card) => card.image);
   const visuals = vision ? await artworkScores(vision.artHash, images) : cards.map(() => 0);
   const layouts =
@@ -292,7 +245,7 @@ export async function matchCard(
         vision?.foil ?? false,
       ),
     )
-    .filter((match) => match.score >= 28)
+    .filter((match) => match.score >= 18)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 16);
+    .slice(0, 12);
 }

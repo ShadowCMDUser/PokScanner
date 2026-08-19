@@ -172,18 +172,11 @@ function addName(target: string[], name: string, blocked?: string | null) {
   }
 }
 
-function extractNames(plateText: string, topText: string, fullText: string, evolvesFrom: string | null) {
+function extractNames(plateText: string, topText: string, _fullText: string, evolvesFrom: string | null) {
   const names: string[] = [];
-  const plate = stripEvolvesFrom(plateText);
-  const top = stripEvolvesFrom(topText);
-  const sources = [plate, top, stripEvolvesFrom(fullText)];
+  const sources = [stripEvolvesFrom(plateText), stripEvolvesFrom(topText)];
 
   for (const source of sources) {
-    for (const match of source.matchAll(
-      /\b((?:Mega\s+)?[A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,3}(?:\s+(?:ex|EX|GX|V|VMAX|VSTAR))?)\b/g,
-    )) {
-      addName(names, match[1], evolvesFrom);
-    }
     for (const match of source.matchAll(/\b([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,3})\s+\d{1,3}\s*HP\b/g)) {
       addName(names, match[1], evolvesFrom);
     }
@@ -192,7 +185,15 @@ function extractNames(plateText: string, topText: string, fullText: string, evol
     }
   }
 
-  return names.slice(0, 6);
+  for (const source of sources) {
+    for (const match of source.matchAll(
+      /\b((?:Mega\s+)?[A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,3}(?:\s+(?:ex|EX|GX|V|VMAX|VSTAR))?)\b/g,
+    )) {
+      addName(names, match[1], evolvesFrom);
+    }
+  }
+
+  return names.slice(0, 4);
 }
 
 export function emptyOcr(): OcrResult {

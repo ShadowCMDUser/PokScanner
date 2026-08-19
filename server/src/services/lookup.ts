@@ -1,4 +1,4 @@
-import type { OcrResult, ScoredMatch, TcgdexCard } from "../types.js";
+import type { OcrResult, TcgdexCard } from "../types.js";
 import { catalogIdCandidates } from "./clipScan.js";
 import {
   cardsByCollector,
@@ -18,15 +18,6 @@ type PokeCard = {
 
 function tidyName(value: string) {
   return value.replace(/[^A-Za-z0-9 '\-]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function sameDigits(left: string, right: string) {
-  return left.replace(/^0+/, "").toLowerCase() === right.replace(/^0+/, "").toLowerCase();
-}
-
-function sameCount(left?: string | number | null, right?: string | number | null) {
-  if (left == null || right == null || left === "") return false;
-  return Number(left) === Number(right);
 }
 
 function namesClose(left: string, right: string) {
@@ -84,67 +75,30 @@ async function tcgdexFromPoke(card: PokeCard, lang: TcgLang) {
   return loaded.find((item) => Boolean(item)) ?? null;
 }
 
-function asMatch(card: TcgdexCard, score: number, reason: string): ScoredMatch {
-  return { card, score, reasons: [reason] };
-}
-
-export async function lookupCard(ocr: OcrResult, lang: TcgLang): Promise<ScoredMatch[]> {
+export async function lookupCard(ocr: OcrResult, lang: TcgLang): Promise<TcgdexCard[]> {
   const names = ocr.nameCandidates.map(tidyName).filter((name) => name.length >= 3).slice(0, 2);
-  const matches: ScoredMatch[] = [];
+  const cards: TcgdexCard[] = [];
 
   if (ocr.collectorNumber && ocr.setTotal) {
-    const stamped = await cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal);
-    for (const card of stamped) {
-      const named = names.length ? names.some((name) => namesClose(name, card.name)) : true;
-      matches.push(asMatch(card, named ? 240 : 160, "catalogus nummer/set"));
-    }
+    cards.push(...(await cardsByCollector(lang, ocr.collectorNumber, ocr.setTotal)));
   }
 
   for (const name of names) {
     const briefs = ocr.collectorNumber
       ? await searchAllCards(lang, { name, localId: ocr.collectorNumber }, 40)
-      : await searchAllCards(lang, { name }, 40);
-    const cards = await hydrateCards(briefs, lang, 20);
-    for (const card of cards) {
-      const numberOk = !ocr.collectorNumber || sameDigits(card.localId, ocr.collectorNumber);
-      const setOk =
-        !ocr.setTotal ||
-        sameCount(ocr.setTotal, card.set?.cardCount?.official) ||
-        sameCount(ocr.setTotal, card.set?.cardCount?.total);
-      matches.push(asMatch(card, numberOk && setOk ? 220 : numberOk ? 150 : 110, "catalogus naam"));
-    }
+      : await searchAllCards(lang, { name }, 30);
+    cards.push(...(await hydrateCards(briefs, lang, 16)));
   }
 
   try {
     const poke = await pokeCards(ocr);
     for (const item of poke.slice(0, 8)) {
       const card = await tcgdexFromPoke(item, lang);
-      if (!card) continue;
-      const numberOk = !ocr.collectorNumber || sameDigits(card.localId, ocr.collectorNumber);
-      const setOk =
-        !ocr.setTotal ||
-        sameCount(ocr.setTotal, item.set?.printedTotal) ||
-        sameCount(ocr.setTotal, item.set?.total) ||
-        sameCount(ocr.setTotal, card.set?.cardCount?.official);
-      matches.push(asMatch(card, numberOk && setOk ? 230 : 140, "catalogus lookup"));
+      if (card) cards.push(card);
     }
   } catch {
     /* gratis lookup, mag stil falen */
   }
 
-  const best = new Map<string, ScoredMatch>();
-  for (const match of matches) {
-    const prev = best.get(match.card.id);
-    if (!prev || match.score > prev.score) best.set(match.card.id, match);
-  }
-  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, 12);
-}
-
-export function mergeMatches(lookup: ScoredMatch[], local: ScoredMatch[]) {
-  const best = new Map<string, ScoredMatch>();
-  for (const match of [...lookup, ...local]) {
-    const prev = best.get(match.card.id);
-    if (!prev || match.score > prev.score) best.set(match.card.id, match);
-  }
-  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, 16);
+  return [...new Map(cards.map((card) => [card.id, card])).values()];
 }

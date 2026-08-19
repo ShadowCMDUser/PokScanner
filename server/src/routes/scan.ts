@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { prepareForOcr } from "../services/image.js";
-import { lookupCard, mergeMatches } from "../services/lookup.js";
+import { lookupCard } from "../services/lookup.js";
 import { matchCard } from "../services/match.js";
 import { readCardText } from "../services/ocr.js";
 import { differenceHash, symbolHash } from "../services/vision.js";
@@ -38,17 +38,19 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
       differenceHash(regions.card),
       symbolHash(regions.symbol),
     ]);
-    const [lookedUp, local] = await Promise.all([
-      lookupCard(ocr, lang),
-      matchCard(ocr, lang, {
+    const extra = await lookupCard(ocr, lang);
+    const matches = await matchCard(
+      ocr,
+      lang,
+      {
         artHash,
         cardHash,
         symbolHash: markHash,
         queryImage: regions.card,
         foil: false,
-      }),
-    ]);
-    const matches = mergeMatches(lookedUp, local);
+      },
+      extra,
+    );
 
     res.json({
       matches,
