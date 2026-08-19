@@ -1,0 +1,99 @@
+export type CardmarketPricing = {
+  unit?: string;
+  avg?: number;
+  low?: number;
+  trend?: number;
+  avg1?: number;
+  avg7?: number;
+  avg30?: number;
+  "avg-holo"?: number;
+  "low-holo"?: number;
+  "trend-holo"?: number;
+};
+
+export type TcgplayerVariantPricing = {
+  marketPrice?: number | null;
+  midPrice?: number | null;
+};
+
+export type TcgdexCard = {
+  id: string;
+  localId: string;
+  name: string;
+  image?: string;
+  category?: string;
+  illustrator?: string;
+  rarity?: string;
+  hp?: number;
+  types?: string[];
+  stage?: string;
+  description?: string;
+  set?: {
+    id: string;
+    name: string;
+    logo?: string;
+    cardCount?: {
+      official?: number;
+      total?: number;
+    };
+  };
+  pricing?: {
+    cardmarket?: CardmarketPricing;
+    tcgplayer?: {
+      unit?: string;
+      normal?: TcgplayerVariantPricing;
+      holofoil?: TcgplayerVariantPricing;
+      "reverse-holofoil"?: TcgplayerVariantPricing;
+    };
+  };
+};
+
+export type OcrResult = {
+  rawText: string;
+  nameCandidates: string[];
+  collectorNumber: string | null;
+  setTotal: string | null;
+  confidence: number;
+};
+
+export type ScoredMatch = {
+  card: TcgdexCard;
+  score: number;
+  reasons: string[];
+};
+
+export type ScanResponse = {
+  ocr: OcrResult;
+  matches: ScoredMatch[];
+  bestMatch: ScoredMatch | null;
+};
+
+export type CardCondition = "mint" | "nm" | "lp" | "mp" | "hp" | "dmg";
+
+export type CollectionEntry = {
+  id: string;
+  cardId: string;
+  name: string;
+  setName: string;
+  setId: string;
+  localId: string;
+  image?: string;
+  rarity?: string;
+  types?: string[];
+  quantity: number;
+  condition: CardCondition;
+  priceEur: number | null;
+  addedAt: string;
+};
+
+export type CollectionResponse = {
+  cards: CollectionEntry[];
+  stats: {
+    unique: number;
+    totalCards: number;
+    totalValue: number;
+  };
+};
+
+export type Page = "scan" | "collection" | "search";
+export type Lang = "en" | "fr" | "de" | "es" | "it";
