@@ -70,7 +70,6 @@ export type ScoredMatch = {
 };
 
 export type ScanResponse = {
-  ocr: OcrResult;
   matches: ScoredMatch[];
   bestMatch: ScoredMatch | null;
   foil?: boolean;

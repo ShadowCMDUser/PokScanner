@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cardArt, formatEur, scanCard, trendPrice } from "../api";
 import { useScanAction } from "../ScanAction";
 import { PokeballIcon } from "./Pokeball";
-import type { CardCondition, Lang, OcrResult, ScanResponse, TcgdexCard } from "../types";
+import type { CardCondition, Lang, ScanResponse, TcgdexCard } from "../types";
 
 const CONDITIONS: { id: CardCondition; label: string }[] = [
   { id: "mint", label: "Mint" },
@@ -22,19 +22,6 @@ function toBlob(canvas: HTMLCanvasElement) {
   return new Promise<Blob | null>((resolve) => {
     canvas.toBlob((value) => resolve(value), "image/jpeg", 0.95);
   });
-}
-
-function readout(ocr: OcrResult) {
-  const bits = [
-    ocr.nameCandidates[0],
-    ocr.hp ? `HP ${ocr.hp}` : null,
-    ocr.evolvesFrom ? `van ${ocr.evolvesFrom}` : null,
-    ocr.collectorNumber ? `#${ocr.collectorNumber}${ocr.setTotal ? `/${ocr.setTotal}` : ""}` : null,
-    ocr.ability,
-    ocr.attacks?.[0] ? `${ocr.attacks[0].name} ${ocr.attacks[0].damage ?? ""}`.trim() : null,
-    ocr.illustrator,
-  ].filter(Boolean);
-  return bits.join(" · ");
 }
 
 export function Scanner({ lang, onAdd }: Props) {
@@ -114,18 +101,14 @@ export function Scanner({ lang, onAdd }: Props) {
     ctx.drawImage(video, 0, 0);
 
     setScanning(true);
-    setHint("Hele kaart uitlezen...");
+    setHint("Kaart herkennen...");
 
     void toBlob(canvas)
       .then(async (blob) => {
         if (!blob) throw new Error("Kon geen foto maken");
         const scan = await scanCard(blob, langRef.current);
         if (!scan.matches.length || !scan.bestMatch) {
-          setHint(
-            scan.ocr.nameCandidates[0]
-              ? `Gelezen: ${readout(scan.ocr)}. Nog geen catalogus-match.`
-              : "Kon de tekst niet lezen. Houd de kaart stiller in het kader.",
-          );
+          setHint("Geen match. Houd de kaart stiller in het kader.");
           return;
         }
         setResult(scan);
@@ -187,7 +170,7 @@ export function Scanner({ lang, onAdd }: Props) {
           <div className="picker-top">
             <div>
               <h2>Is dit je kaart?</h2>
-              <p className="muted">{readout(result.ocr) || "Tik de juiste foto"}</p>
+              <p className="muted">Tik de juiste foto</p>
             </div>
             <button
               className="btn ghost btn-sm"

@@ -8,6 +8,7 @@ const NAME_NOISE =
 
 const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '-.";
 const NUMBER_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/ -";
+const STAMP_CHARS = "0123456789/ ";
 
 const EVOLVES_FROM =
   /(?:evolves?\s+from|evolue\s+de|évolue\s+de|entwickelt\s+sich\s+aus)\s+([A-Za-z][A-Za-z '\-]{2,24})/i;
@@ -112,19 +113,33 @@ function stripEvolvesFrom(text: string) {
 }
 
 function extractCollector(text: string) {
-  const cleaned = tidy(text).replace(/[O]/g, "0").replace(/[Il]/g, "1");
+  const cleaned = tidy(text)
+    .replace(/[OQDo]/g, "0")
+    .replace(/[Il|]/g, "1");
 
-  const classic = cleaned.match(/\b(\d{1,3})\s*[\/\\|]\s*(\d{2,3})\b/);
-  if (classic && Number(classic[2]) >= 20 && Number(classic[2]) <= 500) {
-    return { number: String(Number(classic[1])), total: classic[2] };
+  const pairs: { number: string; total: string; score: number }[] = [];
+
+  function add(number: string, total: string) {
+    const n = Number(number);
+    const t = Number(total);
+    if (!Number.isFinite(n) || !Number.isFinite(t)) return;
+    if (n < 1 || n > 500 || t < 8 || t > 500) return;
+    let score = 8;
+    if (n <= t + 80) score += 6;
+    if (number.length >= 2) score += 2;
+    if (total.length >= 2) score += 2;
+    pairs.push({ number, total, score });
   }
 
-  const compact = cleaned.replace(/\s+/g, "").match(/(\d{1,3})[\/1](\d{2,3})/);
-  if (compact && Number(compact[2]) >= 40 && Number(compact[2]) <= 400) {
-    return { number: String(Number(compact[1])), total: compact[2] };
+  for (const match of cleaned.matchAll(/(\d{1,3})\s*[\/\\]\s*(\d{2,3})\b/g)) {
+    add(match[1], match[2]);
+  }
+  for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\](\d{2,3})/g)) {
+    add(match[1], match[2]);
   }
 
-  return { number: null, total: null };
+  pairs.sort((a, b) => b.score - a.score || Number(b.total) - Number(a.total));
+  return pairs[0] ? { number: pairs[0].number, total: pairs[0].total } : { number: null, total: null };
 }
 
 function sameName(a: string, b: string) {
@@ -204,6 +219,8 @@ export async function readCardText(regions: {
   body?: Buffer;
   bottom: Buffer;
   bottomInk?: Buffer;
+  stamp?: Buffer;
+  stampInk?: Buffer;
 }): Promise<OcrResult> {
   const plate = regions.plate
     ? await recognize(regions.plate, PSM.SINGLE_LINE, NAME_CHARS)
@@ -212,18 +229,26 @@ export async function readCardText(regions: {
   const body = regions.body
     ? await recognize(regions.body, PSM.SPARSE_TEXT)
     : { text: "", confidence: 0 };
+  const stamp = regions.stamp
+    ? await recognize(regions.stamp, PSM.SINGLE_LINE, STAMP_CHARS)
+    : { text: "", confidence: 0 };
+  const stampInk = regions.stampInk
+    ? await recognize(regions.stampInk, PSM.SPARSE_TEXT, STAMP_CHARS)
+    : { text: "", confidence: 0 };
   const bottom = await recognize(regions.bottom, PSM.SINGLE_LINE, NUMBER_CHARS);
   const bottomInk = regions.bottomInk
     ? await recognize(regions.bottomInk, PSM.SINGLE_LINE, NUMBER_CHARS)
     : { text: "", confidence: 0 };
   const full = await recognize(regions.full, PSM.SPARSE_TEXT);
 
-  const combined = [plate.text, top.text, body.text, full.text, bottom.text, bottomInk.text]
+  const combined = [plate.text, top.text, body.text, full.text, stamp.text, stampInk.text, bottom.text, bottomInk.text]
     .filter(Boolean)
     .join("\n");
   const evolvesFrom = extractEvolvesFrom(combined);
-  const footer = `${bottom.text}\n${bottomInk.text}\n${full.text}`;
-  const collector = extractCollector(footer);
+  const stampText = `${stamp.text}\n${stampInk.text}`;
+  const footer = `${stampText}\n${bottom.text}\n${bottomInk.text}\n${full.text}`;
+  const collector = extractCollector(stampText);
+  const fallback = collector.number ? collector : extractCollector(footer);
   const names = extractNames(`${plate.text}\n${top.text}`, top.text, combined, evolvesFrom);
 
   return {
@@ -231,8 +256,8 @@ export async function readCardText(regions: {
     nameCandidates: names,
     evolvesFrom,
     hp: extractHp(`${plate.text}\n${top.text}\n${combined}`),
-    collectorNumber: collector.number,
-    setTotal: collector.total,
+    collectorNumber: fallback.number,
+    setTotal: fallback.total,
     illustrator: extractIllustrator(combined),
     stage: extractStage(combined),
     regulationMark: extractRegulation(footer),

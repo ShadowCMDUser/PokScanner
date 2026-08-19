@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { extractIllustration } from "./image.js";
-import { cardImageUrl } from "./tcgdex.js";
+import { cardImageUrl, setSymbolUrl } from "./tcgdex.js";
 
 const hashCache = new Map<string, bigint>();
 const HASH_CACHE_MAX = 1500;
@@ -17,15 +17,15 @@ export async function differenceHash(input: Buffer) {
   const { data } = await sharp(input)
     .greyscale()
     .normalize()
-    .resize(9, 8, { fit: "fill" })
+    .resize(17, 16, { fit: "fill" })
     .raw()
     .toBuffer({ resolveWithObject: true });
 
   let hash = 0n;
-  for (let y = 0; y < 8; y += 1) {
-    for (let x = 0; x < 8; x += 1) {
-      if (data[y * 9 + x] > data[y * 9 + x + 1]) {
-        hash |= 1n << BigInt(y * 8 + x);
+  for (let y = 0; y < 16; y += 1) {
+    for (let x = 0; x < 16; x += 1) {
+      if (data[y * 17 + x] > data[y * 17 + x + 1]) {
+        hash |= 1n << BigInt(y * 16 + x);
       }
     }
   }
@@ -59,8 +59,18 @@ export async function readFoilHint(art: Buffer) {
   return hot / total > 0.08;
 }
 
-async function hashFromUrl(url: string) {
-  const cached = hashCache.get(url);
+export async function symbolHash(input: Buffer) {
+  try {
+    const trimmed = await sharp(input).trim({ threshold: 28 }).png().toBuffer();
+    return differenceHash(trimmed);
+  } catch {
+    return differenceHash(input);
+  }
+}
+
+async function hashFromUrl(url: string, cropArt: boolean, trim = false) {
+  const cacheKey = `${cropArt ? "art" : trim ? "symbol" : "full"}:${url}`;
+  const cached = hashCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
   const response = await fetch(url, {
@@ -69,9 +79,9 @@ async function hashFromUrl(url: string) {
   });
   if (!response.ok) return null;
   const buffer = Buffer.from(await response.arrayBuffer());
-  const art = (await extractIllustration(buffer)) ?? buffer;
-  const hash = await differenceHash(art);
-  remember(url, hash);
+  const source = cropArt ? ((await extractIllustration(buffer)) ?? buffer) : buffer;
+  const hash = trim ? await symbolHash(source) : await differenceHash(source);
+  remember(cacheKey, hash);
   return hash;
 }
 
@@ -91,16 +101,44 @@ async function mapPool<T, R>(items: T[], limit: number, mapper: (item: T, index:
   return out;
 }
 
-export async function artworkScores(scanHash: bigint, imageBases: (string | undefined)[]) {
+function hashScore(scanHash: bigint, catalogHash: bigint) {
+  const distance = hamming(scanHash, catalogHash);
+  if (distance > 96) return 0;
+  return Math.round(((256 - distance) / 256) * 100);
+}
+
+async function compareImages(scanHash: bigint, imageBases: (string | undefined)[], cropArt: boolean) {
   return mapPool(imageBases, 8, async (image) => {
     const url = cardImageUrl(image, "low");
     if (!url) return 0;
     try {
-      const catalogHash = await hashFromUrl(url);
+      const catalogHash = await hashFromUrl(url, cropArt);
+      if (catalogHash == null) return 0;
+      return hashScore(scanHash, catalogHash);
+    } catch {
+      return 0;
+    }
+  });
+}
+
+export async function artworkScores(scanHash: bigint, imageBases: (string | undefined)[]) {
+  return compareImages(scanHash, imageBases, true);
+}
+
+export async function layoutScores(scanHash: bigint, imageBases: (string | undefined)[]) {
+  return compareImages(scanHash, imageBases, false);
+}
+
+export async function symbolScores(scanHash: bigint, symbolBases: (string | undefined)[]) {
+  return mapPool(symbolBases, 8, async (symbol) => {
+    const url = setSymbolUrl(symbol);
+    if (!url) return 0;
+    try {
+      const catalogHash = await hashFromUrl(url, false, true);
       if (catalogHash == null) return 0;
       const distance = hamming(scanHash, catalogHash);
-      if (distance > 22) return 0;
-      return Math.round(((64 - distance) / 64) * 100);
+      if (distance > 110) return 0;
+      return Math.round(((256 - distance) / 256) * 100);
     } catch {
       return 0;
     }
