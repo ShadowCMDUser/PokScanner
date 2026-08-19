@@ -28,20 +28,30 @@ function levenshtein(a: string, b: string) {
   return matrix[a.length][b.length];
 }
 
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\s+(ex|gx|v|vmax|vstar|lv\.?x)$/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 function similarity(a: string, b: string) {
-  const left = a.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const right = b.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const left = normalizeName(a);
+  const right = normalizeName(b);
   if (!left || !right) return 0;
   if (left === right) return 1;
-  if (right.includes(left) || left.includes(right)) return 0.86;
+  if (left.length >= 5 && (right.startsWith(left) || left.startsWith(right))) return 0.92;
+  if (left.length >= 6 && (right.includes(left) || left.includes(right))) return 0.8;
   const distance = levenshtein(left, right);
   return 1 - distance / Math.max(left.length, right.length);
 }
 
 function bestNameScore(cardName: string, candidates: string[]) {
-  return candidates.reduce((best, candidate) => {
-    return Math.max(best, similarity(candidate, cardName));
-  }, 0);
+  return candidates.reduce((best, candidate) => Math.max(best, similarity(candidate, cardName)), 0);
+}
+
+function sameLocalId(cardId: string, found: string) {
+  return cardId.replace(/^0+/, "").toLowerCase() === found.replace(/^0+/, "").toLowerCase();
 }
 
 function scoreCard(card: TcgdexCard, ocr: OcrResult): ScoredMatch {
@@ -49,25 +59,24 @@ function scoreCard(card: TcgdexCard, ocr: OcrResult): ScoredMatch {
   let score = 0;
 
   const nameScore = bestNameScore(card.name, ocr.nameCandidates);
-  if (nameScore >= 0.55) {
+  if (nameScore >= 0.78) {
     score += nameScore * 70;
+    reasons.push(`naam ${Math.round(nameScore * 100)}%`);
+  } else if (nameScore >= 0.62 && ocr.collectorNumber) {
+    score += nameScore * 48;
     reasons.push(`naam ${Math.round(nameScore * 100)}%`);
   }
 
-  if (ocr.collectorNumber) {
-    const local = card.localId.replace(/^0+/, "").toLowerCase();
-    const found = ocr.collectorNumber.replace(/^0+/, "").toLowerCase();
-    if (local === found) {
-      score += 28;
-      reasons.push("nummer match");
-    }
+  if (ocr.collectorNumber && sameLocalId(card.localId, ocr.collectorNumber)) {
+    score += 32;
+    reasons.push("nummer match");
   }
 
   if (ocr.setTotal && card.set?.cardCount) {
     const total = String(card.set.cardCount.official ?? "");
     const all = String(card.set.cardCount.total ?? "");
     if (ocr.setTotal === total || ocr.setTotal === all) {
-      score += 12;
+      score += 16;
       reasons.push("setgrootte match");
     }
   }
@@ -77,38 +86,40 @@ function scoreCard(card: TcgdexCard, ocr: OcrResult): ScoredMatch {
 
 async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
   const queries: Promise<TcgdexCardBrief[]>[] = [];
-  const primaryName = ocr.nameCandidates[0]
-    ?.replace(/[^A-Za-z0-9 '\-]/g, "")
-    .trim();
+  const names = ocr.nameCandidates
+    .map((name) => name.replace(/[^A-Za-z0-9 '\-]/g, "").trim())
+    .filter((name) => name.length >= 3)
+    .slice(0, 3);
 
-  if (primaryName && primaryName.length >= 3 && ocr.collectorNumber) {
+  if (ocr.collectorNumber) {
     queries.push(
-      searchCards(lang, {
-        name: primaryName,
-        localId: ocr.collectorNumber,
-        itemsPerPage: 30,
-      }),
+      searchCards(lang, { localId: ocr.collectorNumber, itemsPerPage: 50 }),
     );
   }
 
-  if (primaryName && primaryName.length >= 3) {
-    queries.push(searchCards(lang, { name: primaryName, itemsPerPage: 40 }));
+  for (const name of names) {
+    if (ocr.collectorNumber) {
+      queries.push(
+        searchCards(lang, {
+          name,
+          localId: ocr.collectorNumber,
+          itemsPerPage: 30,
+        }),
+      );
+    }
+    queries.push(searchCards(lang, { name, itemsPerPage: 30 }));
   }
 
   if (!queries.length) return [];
 
   const results = await Promise.allSettled(queries);
-  return results.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
-  );
+  return results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 }
 
 function briefScore(brief: TcgdexCardBrief, ocr: OcrResult) {
   let score = bestNameScore(brief.name, ocr.nameCandidates) * 70;
-  if (ocr.collectorNumber) {
-    const local = brief.localId.replace(/^0+/, "").toLowerCase();
-    const found = ocr.collectorNumber.replace(/^0+/, "").toLowerCase();
-    if (local === found) score += 28;
+  if (ocr.collectorNumber && sameLocalId(brief.localId, ocr.collectorNumber)) {
+    score += 32;
   }
   return score;
 }
@@ -123,7 +134,7 @@ export async function matchCard(
 
   const ranked = [...new Map(briefs.map((card) => [card.id, card])).values()]
     .map((brief) => ({ brief, score: briefScore(brief, ocr) }))
-    .filter((item) => item.score >= 50)
+    .filter((item) => item.score >= 48)
     .sort((a, b) => b.score - a.score)
     .slice(0, 8)
     .map((item) => item.brief);
@@ -131,7 +142,7 @@ export async function matchCard(
   const cards = await hydrateCards(ranked, lang, 8);
   return cards
     .map((card) => scoreCard(card, ocr))
-    .filter((match) => match.score > 20)
+    .filter((match) => match.score >= 50)
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
 }

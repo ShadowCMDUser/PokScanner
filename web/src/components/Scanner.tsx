@@ -127,8 +127,21 @@ function frameStats(ctx: CanvasRenderingContext2D, w: number, h: number, prev: U
 
 function toBlob(canvas: HTMLCanvasElement) {
   return new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((value) => resolve(value), "image/jpeg", 0.84);
+    canvas.toBlob((value) => resolve(value), "image/jpeg", 0.92);
   });
+}
+
+function cardLike(bounds: Bounds, video: HTMLVideoElement) {
+  const aspect = (bounds.w * video.videoWidth) / (bounds.h * video.videoHeight);
+  return aspect > 0.58 && aspect < 0.86 && bounds.w > 0.34 && bounds.h > 0.34;
+}
+
+function isConfident(scan: ScanResponse) {
+  const best = scan.bestMatch;
+  if (!best || scan.ocr.nameCandidates.length === 0) return false;
+  if (best.score >= 78) return true;
+  if (best.score >= 64 && scan.ocr.collectorNumber) return true;
+  return false;
 }
 
 export function Scanner({ lang, onAdd }: Props) {
@@ -137,6 +150,7 @@ export function Scanner({ lang, onAdd }: Props) {
   const busyRef = useRef(false);
   const cooldownRef = useRef(0);
   const prevFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const lastMatchRef = useRef<string | null>(null);
   const stableRef = useRef(0);
   const sampleCanvas = useRef<HTMLCanvasElement | null>(null);
   const captureCanvas = useRef<HTMLCanvasElement | null>(null);
@@ -162,7 +176,11 @@ export function Scanner({ lang, onAdd }: Props) {
 
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
         audio: false,
       })
       .then((media) => {
@@ -225,7 +243,7 @@ export function Scanner({ lang, onAdd }: Props) {
       }
 
       stableRef.current += 1;
-      if (stableRef.current < 2) {
+      if (stableRef.current < 3) {
         setHint("Kaart gezien...");
         return;
       }
@@ -235,23 +253,49 @@ export function Scanner({ lang, onAdd }: Props) {
       setHint("Kaart herkennen...");
 
       const capture = captureCanvas.current!;
-      const width = Math.min(900, Math.round(video.videoWidth * card.w));
-      const height = Math.max(120, Math.round(width * (card.h / Math.max(card.w, 0.01))));
-      drawVideo(video, capture, width, height, card);
+      const useCrop = cardLike(card, video);
+      const maxW = 1280;
+      if (useCrop) {
+        const width = Math.min(maxW, Math.round(video.videoWidth * card.w));
+        const height = Math.max(
+          160,
+          Math.round(width * ((card.h * video.videoHeight) / Math.max(card.w * video.videoWidth, 1))),
+        );
+        drawVideo(video, capture, width, height, card);
+      } else {
+        const scale = Math.min(1, maxW / video.videoWidth);
+        drawVideo(
+          video,
+          capture,
+          Math.round(video.videoWidth * scale),
+          Math.round(video.videoHeight * scale),
+        );
+      }
 
       void toBlob(capture)
         .then(async (blob) => {
           if (!blob) return;
           const scan = await scanCard(blob, langRef.current);
           const best = scan.bestMatch;
-          if (best && best.score >= 40 && scan.ocr.nameCandidates.length > 0) {
+          if (!best) {
+            lastMatchRef.current = null;
+            cooldownRef.current = Date.now() + 500;
+            setHint("Nog geen match, houd de kaart stil...");
+            return;
+          }
+
+          const sameAsLast = lastMatchRef.current === best.card.id;
+          lastMatchRef.current = best.card.id;
+
+          if (isConfident(scan) || (sameAsLast && best.score >= 58)) {
             setResult(scan);
             setSelectedId(best.card.id);
             setHint(null);
             return;
           }
-          cooldownRef.current = Date.now() + 650;
-          setHint("Nog geen match, houd de kaart stil...");
+
+          cooldownRef.current = Date.now() + 350;
+          setHint("Bijna... houd nog even stil");
         })
         .catch(() => {
           cooldownRef.current = Date.now() + 900;
@@ -274,6 +318,7 @@ export function Scanner({ lang, onAdd }: Props) {
     setHint("Houd je kaart in beeld");
     cooldownRef.current = Date.now() + 800;
     prevFrameRef.current = null;
+    lastMatchRef.current = null;
     stableRef.current = 0;
   }
 
