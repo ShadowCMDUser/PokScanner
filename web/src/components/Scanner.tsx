@@ -353,60 +353,67 @@ export function Scanner({ lang, onAdd }: Props) {
       </div>
 
       {result && selected && (
-        <div className="sheet">
+        <div className="picker">
           <div className="sheet-handle" />
-          <div className="sheet-head">
-            {selected.image && (
-              <img className="sheet-art" src={cardArt(selected.image, "low")} alt="" />
-            )}
-            <div className="sheet-meta">
-              <strong>{selected.name}</strong>
-              <span className="muted">
-                {selected.set?.name} · #{selected.localId}
-              </span>
-              <span className="price">{formatEur(trendPrice(selected))}</span>
+          <div className="picker-top">
+            <div>
+              <h2>Welke kaart?</h2>
+              <p className="muted">Tik de juiste foto</p>
             </div>
             <button className="btn ghost btn-sm" onClick={reset}>
               Opnieuw
             </button>
           </div>
 
-          {result.matches.length > 1 && (
-            <div className="match-row">
-              {result.matches.map((match) => (
+          <div className="picker-track">
+            {(result.matches.length ? result.matches : result.bestMatch ? [result.bestMatch] : []).map(
+              (match) => (
                 <button
                   key={match.card.id}
-                  className={`match-pill ${match.card.id === selected.id ? "selected" : ""}`}
+                  className={`picker-card${match.card.id === selected.id ? " selected" : ""}`}
                   onClick={() => setSelectedId(match.card.id)}
                 >
-                  {match.card.name}
-                  <span>{match.score}%</span>
+                  {match.card.image ? (
+                    <img src={cardArt(match.card.image, "high")} alt={match.card.name} />
+                  ) : (
+                    <div className="picker-fallback">{match.card.name}</div>
+                  )}
+                  <strong>{match.card.name}</strong>
+                  <span className="muted">
+                    {match.card.set?.name} · #{match.card.localId}
+                  </span>
                 </button>
-              ))}
-            </div>
-          )}
+              ),
+            )}
+          </div>
 
-          <div className="sheet-actions">
-            <select
-              value={condition}
-              onChange={(event) => setCondition(event.target.value as CardCondition)}
-              aria-label="Conditie"
-            >
-              {CONDITIONS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className="btn primary"
-              disabled={saved}
-              onClick={() => {
-                void onAdd(selected, condition).then(() => setSaved(true));
-              }}
-            >
-              {saved ? "Toegevoegd" : "In collectie"}
-            </button>
+          <div className="picker-footer">
+            <div className="picker-chosen">
+              <strong>{selected.name}</strong>
+              <span className="price">{formatEur(trendPrice(selected))}</span>
+            </div>
+            <div className="sheet-actions">
+              <select
+                value={condition}
+                onChange={(event) => setCondition(event.target.value as CardCondition)}
+                aria-label="Conditie"
+              >
+                {CONDITIONS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn primary"
+                disabled={saved}
+                onClick={() => {
+                  void onAdd(selected, condition).then(() => setSaved(true));
+                }}
+              >
+                {saved ? "Toegevoegd" : "In collectie"}
+              </button>
+            </div>
           </div>
         </div>
       )}

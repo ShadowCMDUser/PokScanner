@@ -134,15 +134,15 @@ export async function matchCard(
 
   const ranked = [...new Map(briefs.map((card) => [card.id, card])).values()]
     .map((brief) => ({ brief, score: briefScore(brief, ocr) }))
-    .filter((item) => item.score >= 48)
+    .filter((item) => item.score >= 40)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 8)
+    .slice(0, 10)
     .map((item) => item.brief);
 
-  const cards = await hydrateCards(ranked, lang, 8);
+  const cards = await hydrateCards(ranked, lang, 10);
   return cards
     .map((card) => scoreCard(card, ocr))
-    .filter((match) => match.score >= 50)
+    .filter((match) => match.score >= 40)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
+    .slice(0, 8);
 }

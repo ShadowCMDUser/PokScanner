@@ -227,6 +227,7 @@ img {
 }
 
 .scanner {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -313,22 +314,27 @@ img {
   width: min(240px, 100%);
 }
 
-.sheet {
-  flex: 0 1 auto;
-  max-height: 44%;
-  overflow: auto;
-  padding: 8px 14px 14px;
-  background: var(--panel);
+.picker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  max-height: 78%;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 12px;
+  background: rgba(12, 13, 18, 0.96);
   border-top: 1px solid var(--line);
-  border-radius: 22px 22px 0 0;
-  display: grid;
-  gap: 10px;
-  animation: sheetUp 0.28s ease;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px);
+  animation: sheetUp 0.32s ease;
 }
 
 @keyframes sheetUp {
   from {
-    transform: translateY(24px);
+    transform: translateY(28px);
     opacity: 0;
   }
 }
@@ -338,69 +344,114 @@ img {
   height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.22);
-  margin: 2px auto 4px;
+  margin: 2px auto 8px;
 }
 
-.sheet-head {
+.picker-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px 10px;
+}
+
+.picker-top h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.picker-top p {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+}
+
+.picker-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 4px 16px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.picker-card {
+  flex: 0 0 46%;
+  max-width: 200px;
   display: grid;
-  grid-template-columns: 56px 1fr auto;
-  gap: 10px;
-  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  scroll-snap-align: center;
 }
 
-.sheet-art {
-  width: 56px;
-  height: 78px;
-  object-fit: cover;
-  border-radius: 8px;
+.picker-card img,
+.picker-fallback {
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #0a0a10;
 }
 
-.sheet-meta {
+.picker-fallback {
   display: grid;
-  gap: 2px;
-  min-width: 0;
+  place-items: center;
+  padding: 8px;
+  font-size: 0.8rem;
+  font-weight: 800;
 }
 
-.sheet-meta strong {
+.picker-card strong,
+.picker-card .muted {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 1.02rem;
+}
+
+.picker-card strong {
+  font-size: 0.82rem;
+}
+
+.picker-card .muted {
+  font-size: 0.7rem;
+}
+
+.picker-card.selected {
+  border-color: var(--red);
+  background: rgba(238, 21, 21, 0.14);
+  box-shadow: 0 0 0 1px rgba(238, 21, 21, 0.35);
+}
+
+.picker-footer {
+  padding: 8px 16px 0;
+  display: grid;
+  gap: 10px;
+}
+
+.picker-chosen {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.picker-chosen strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sheet-actions {
   display: grid;
   grid-template-columns: 92px 1fr;
   gap: 8px;
-}
-
-.match-row {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-}
-
-.match-pill {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-
-.match-pill span {
-  color: var(--muted);
-}
-
-.match-pill.selected {
-  border-color: var(--red);
-  background: rgba(238, 21, 21, 0.16);
 }
 
 .btn,
@@ -747,14 +798,20 @@ img {
 @media (min-width: 960px) {
   .scanner {
     display: grid;
-    grid-template-columns: 1.2fr 0.8fr;
+    grid-template-columns: 1.15fr 0.85fr;
   }
 
-  .sheet {
+  .picker {
+    position: static;
     max-height: none;
     border-radius: 0;
     border-top: 0;
     border-left: 1px solid var(--line);
+    animation: none;
+  }
+
+  .picker-card {
+    flex-basis: 38%;
   }
 
   .grid {
