@@ -21,6 +21,7 @@ html,
 body,
 #root {
   min-height: 100%;
+  min-height: 100dvh;
 }
 
 body {
@@ -31,6 +32,7 @@ body {
     radial-gradient(1200px 500px at 10% -10%, rgba(227, 53, 13, 0.22), transparent 50%),
     radial-gradient(900px 420px at 100% 0%, rgba(61, 125, 202, 0.2), transparent 46%),
     linear-gradient(180deg, #0c1220, var(--bg) 40%);
+  background-attachment: fixed;
 }
 
 button,
@@ -49,9 +51,9 @@ img {
 }
 
 .app {
-  width: min(1120px, calc(100% - 32px));
+  width: min(1120px, calc(100% - 24px));
   margin: 0 auto;
-  padding: 24px 0 64px;
+  padding: 16px 0 calc(28px + env(safe-area-inset-bottom));
 }
 
 .topbar {
@@ -71,6 +73,7 @@ img {
 .pokeball {
   width: 42px;
   height: 42px;
+  flex-shrink: 0;
 }
 
 .brand h1 {
@@ -99,6 +102,8 @@ img {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .nav button,
@@ -111,8 +116,9 @@ select {
 }
 
 .nav button {
-  padding: 8px 16px;
+  padding: 10px 16px;
   border-radius: 999px;
+  min-height: 44px;
 }
 
 .nav button.active {
@@ -127,7 +133,9 @@ select,
   border: 1px solid var(--line);
   color: var(--text);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 14px 12px;
+  font-size: 16px;
+  width: 100%;
 }
 
 .hero,
@@ -185,16 +193,17 @@ select,
 }
 
 .controls {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 14px;
 }
 
 .btn {
   border-radius: 14px;
-  padding: 11px 16px;
+  padding: 14px 16px;
   font-weight: 700;
+  min-height: 48px;
 }
 
 .btn.primary {
@@ -333,7 +342,7 @@ select,
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 16px;
 }
 
@@ -384,33 +393,158 @@ select,
 }
 
 .qty button {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
 }
 
+.auth-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.social-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.btn.social {
+  border-color: var(--line);
+  width: 100%;
+}
+
+.btn.google {
+  background: #fff;
+  color: #1f1f1f;
+}
+
+.btn.facebook {
+  background: #1877f2;
+}
+
+.btn.discord {
+  background: #5865f2;
+}
+
+.auth-split {
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-screen {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  width: min(440px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 calc(28px + env(safe-area-inset-bottom));
+}
+
+.login-brand {
+  text-align: center;
+}
+
+.login-brand h1 {
+  margin: 12px 0 6px;
+  font-family: Syne, Outfit, sans-serif;
+  font-size: 2rem;
+}
+
+.login-brand p {
+  margin: 0 auto;
+  color: var(--muted);
+  max-width: 16rem;
+}
+
+.login-ball,
+.login-brand .pokeball {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto;
+}
+
+.login-card {
+  width: 100%;
+  padding: 22px;
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.login-screen .btn {
+  width: 100%;
+}
+
 @media (max-width: 860px) {
   .hero,
-  .stats {
+  .stats,
+  .search-bar,
+  .controls {
     grid-template-columns: 1fr;
   }
 
   .topbar,
-  .top-actions {
+  .top-actions,
+  .user-chip {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .brand p {
+    display: none;
+  }
+
+  .nav {
+    width: 100%;
+  }
+
+  .nav button {
+    flex: 1;
   }
 
   .viewfinder,
   .viewfinder video,
   .viewfinder img.preview {
-    min-height: 420px;
+    min-height: 58vh;
   }
 
   .frame {
-    inset: 10% 16%;
+    inset: 8% 12%;
+  }
+
+  .frame::after {
+    font-size: 0.78rem;
+    bottom: -28px;
+  }
+
+  .user-chip span {
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .login-screen .btn,
+  .controls .btn,
+  .card-tile .btn,
+  .search-bar .btn {
+    width: 100%;
   }
 }

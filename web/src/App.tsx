@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { addCard } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { addCard, fetchLoginOptions } from "./api";
+import { authClient } from "./auth-client";
 import { Collection } from "./components/Collection";
+import { LoginPage } from "./components/LoginPage";
 import { Scanner } from "./components/Scanner";
 import { Search } from "./components/Search";
-import type { CardCondition, Lang, Page, TcgdexCard } from "./types";
+import type { CardCondition, Lang, Page, SocialProvider, TcgdexCard } from "./types";
 
 const LANGS: { id: Lang; label: string }[] = [
   { id: "en", label: "EN" },
@@ -12,6 +14,19 @@ const LANGS: { id: Lang; label: string }[] = [
   { id: "es", label: "ES" },
   { id: "it", label: "IT" },
 ];
+
+function pageFromHash(): Page {
+  const hash = window.location.hash.replace(/^#\/?/, "");
+  if (hash === "collection" || hash === "search") return hash;
+  return "scan";
+}
+
+function setHash(page: Page) {
+  const next = page === "scan" ? "#/" : `#/${page}`;
+  if (window.location.hash !== next) {
+    window.location.hash = next;
+  }
+}
 
 function PokeballIcon() {
   return (
@@ -24,14 +39,49 @@ function PokeballIcon() {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>("scan");
+  const session = authClient.useSession();
+  const user = session.data?.user;
+  const [page, setPage] = useState<Page>(pageFromHash);
   const [lang, setLang] = useState<Lang>("en");
   const [notice, setNotice] = useState<string | null>(null);
+  const [providers, setProviders] = useState<SocialProvider[]>([]);
+
+  const goTo = useCallback((next: Page) => {
+    setPage(next);
+    setHash(next);
+  }, []);
+
+  useEffect(() => {
+    void fetchLoginOptions()
+      .then((options) => setProviders(options.providers))
+      .catch(() => setProviders([]));
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   async function handleAdd(card: TcgdexCard, condition: CardCondition) {
     await addCard(card.id, lang, condition);
     setNotice(`${card.name} is toegevoegd aan je collectie.`);
     setTimeout(() => setNotice(null), 2500);
+  }
+
+  if (session.isPending) {
+    return (
+      <main className="login-screen">
+        <div className="login-brand">
+          <PokeballIcon />
+          <p className="muted">Laden...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage providers={providers} onDone={() => goTo("scan")} />;
   }
 
   return (
@@ -46,16 +96,16 @@ export default function App() {
         </div>
         <div className="top-actions">
           <nav className="nav">
-            <button className={page === "scan" ? "active" : ""} onClick={() => setPage("scan")}>
+            <button className={page === "scan" ? "active" : ""} onClick={() => goTo("scan")}>
               Scanner
             </button>
             <button
               className={page === "collection" ? "active" : ""}
-              onClick={() => setPage("collection")}
+              onClick={() => goTo("collection")}
             >
               Collectie
             </button>
-            <button className={page === "search" ? "active" : ""} onClick={() => setPage("search")}>
+            <button className={page === "search" ? "active" : ""} onClick={() => goTo("search")}>
               Zoeken
             </button>
           </nav>
@@ -66,6 +116,17 @@ export default function App() {
               </option>
             ))}
           </select>
+          <div className="user-chip">
+            <span>{user.name || user.email}</span>
+            <button
+              className="btn ghost"
+              onClick={() => {
+                void authClient.signOut();
+              }}
+            >
+              Uitloggen
+            </button>
+          </div>
         </div>
       </header>
 

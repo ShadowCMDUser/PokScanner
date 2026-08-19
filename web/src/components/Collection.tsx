@@ -8,6 +8,7 @@ export function Collection() {
 
   async function load() {
     try {
+      setError(null);
       setData(await fetchCollection());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Collectie laden mislukt");
@@ -59,7 +60,9 @@ export function Collection() {
                 >
                   -
                 </button>
-                <span>{card.quantity}× {card.condition.toUpperCase()}</span>
+                <span>
+                  {card.quantity}× {card.condition.toUpperCase()}
+                </span>
                 <button
                   onClick={() => {
                     void updateCard(card.id, { quantity: card.quantity + 1 }).then(load);

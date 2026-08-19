@@ -4,6 +4,7 @@ import type {
   CollectionResponse,
   Lang,
   ScanResponse,
+  SocialProvider,
   TcgdexCard,
 } from "./types";
 
@@ -15,6 +16,8 @@ async function parseJson<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
+
+const credentials: RequestInit = { credentials: "include" };
 
 export function cardArt(image?: string, quality: "low" | "high" = "high") {
   if (!image) return undefined;
@@ -40,18 +43,23 @@ export async function scanCard(file: Blob, lang: Lang) {
   const form = new FormData();
   form.append("image", file, "scan.jpg");
   form.append("lang", lang);
-  const response = await fetch("/api/scan", { method: "POST", body: form });
+  const response = await fetch("/api/scan", { method: "POST", body: form, ...credentials });
   return parseJson<ScanResponse>(response);
 }
 
 export async function searchCards(query: string, lang: Lang) {
   const params = new URLSearchParams({ q: query, lang });
-  const response = await fetch(`/api/cards?${params}`);
+  const response = await fetch(`/api/cards?${params}`, credentials);
   return parseJson<TcgdexCard[]>(response);
 }
 
+export async function fetchLoginOptions() {
+  const response = await fetch("/api/login-options", credentials);
+  return parseJson<{ providers: SocialProvider[] }>(response);
+}
+
 export async function fetchCollection() {
-  const response = await fetch("/api/collection");
+  const response = await fetch("/api/collection", credentials);
   return parseJson<CollectionResponse>(response);
 }
 
@@ -64,6 +72,7 @@ export async function addCard(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cardId, lang, condition }),
+    ...credentials,
   });
   return parseJson<CollectionEntry>(response);
 }
@@ -76,11 +85,15 @@ export async function updateCard(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
+    ...credentials,
   });
   return parseJson<CollectionEntry>(response);
 }
 
 export async function removeCard(id: string) {
-  const response = await fetch(`/api/collection/${id}`, { method: "DELETE" });
+  const response = await fetch(`/api/collection/${id}`, {
+    method: "DELETE",
+    ...credentials,
+  });
   return parseJson<void>(response);
 }

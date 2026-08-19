@@ -5,15 +5,17 @@ import {
   removeCollectionEntry,
   updateCollectionEntry,
 } from "../db.js";
+import { getUserId, requireUser } from "../middleware/requireUser.js";
 import { getCard, normalizeLang } from "../services/tcgdex.js";
 import type { CardCondition } from "../types.js";
 
 const CONDITIONS: CardCondition[] = ["mint", "nm", "lp", "mp", "hp", "dmg"];
 
 export const collectionRouter = Router();
+collectionRouter.use(requireUser);
 
 collectionRouter.get("/", (_req, res) => {
-  const cards = listCollection();
+  const cards = listCollection(getUserId(res));
   const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
   const totalValue = cards.reduce(
     (sum, card) => sum + (card.priceEur ?? 0) * card.quantity,
@@ -44,7 +46,7 @@ collectionRouter.post("/", async (req, res) => {
       : "nm";
     const quantity = Number(req.body?.quantity ?? 1);
     const card = await getCard(cardId, lang);
-    const entry = addToCollection(card, { condition, quantity });
+    const entry = addToCollection(getUserId(res), card, { condition, quantity });
     res.status(201).json(entry);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Toevoegen mislukt";
@@ -59,7 +61,7 @@ collectionRouter.patch("/:id", (req, res) => {
     patch.condition = req.body.condition;
   }
 
-  const entry = updateCollectionEntry(req.params.id, patch);
+  const entry = updateCollectionEntry(getUserId(res), req.params.id, patch);
   if (!entry) {
     res.status(404).json({ error: "Kaart niet gevonden in collectie" });
     return;
@@ -68,7 +70,7 @@ collectionRouter.patch("/:id", (req, res) => {
 });
 
 collectionRouter.delete("/:id", (req, res) => {
-  const removed = removeCollectionEntry(req.params.id);
+  const removed = removeCollectionEntry(getUserId(res), req.params.id);
   if (!removed) {
     res.status(404).json({ error: "Kaart niet gevonden in collectie" });
     return;

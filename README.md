@@ -23,9 +23,27 @@ Open daarna [http://localhost:5173](http://localhost:5173).
 2. De server recht de foto, verhoogt het contrast en leest tekst met Tesseract.
 3. Naam en collectornummer (`025/165`) worden gematcht tegen de TCGdex-catalogus.
 4. Je ziet de kaart, set, rarity en de Cardmarket-trendprijs in euro.
-5. Voeg de kaart toe aan je collectie. Die staat lokaal in `data/collection.json`.
+5. Voeg de kaart toe aan je collectie. Die staat per account in `data/collection.json`.
 
 Tips voor betere herkenning: recht van boven, weinig glare op holo’s, collectornummer onderaan leesbaar. Kaarttaal (EN/FR/DE/ES/IT) stel je in via de selector bovenin.
+
+## Inloggen
+
+E-mail/wachtwoord werkt meteen. Google, Facebook en Discord alleen als je hun keys in de environment zet. Kopieer `.env.example` naar `.env` voor lokaal.
+
+Callback-URL’s bij de providers (lokaal / productie):
+
+- `/api/auth/callback/google`
+- `/api/auth/callback/facebook`
+- `/api/auth/callback/discord`
+
+Voorbeeld productie: `https://pokscanner.jouwdomein.be/api/auth/callback/google`
+
+In Dokploy minstens:
+
+- `BETTER_AUTH_SECRET` (lange random string)
+- `BETTER_AUTH_URL` (je publieke https-URL, zonder slash op het einde)
+- de client id/secret van de social logins die je wilt
 
 ## Deploy (Dokploy + Nixpacks)
 
@@ -34,9 +52,10 @@ De repo bevat `nixpacks.toml`. In Dokploy:
 1. Builder: **Nixpacks**
 2. Healthcheck: `/api/health`
 3. Poort: laat Dokploy `PORT` zetten (de app luistert op `0.0.0.0`)
-4. Persistent volume (aanbevolen): mount naar `/app/data` zodat collectie en OCR-cache bewaard blijven
+4. Persistent volume (aanbevolen): mount naar `/app/data` zodat collectie, accounts en OCR-cache bewaard blijven
+5. Zet `BETTER_AUTH_SECRET` en `BETTER_AUTH_URL` in de environment
 
-Geen API-keys nodig. De container heeft internet nodig (TCGdex + eerste Tesseract-download). Voor scans mag de reverse-proxy uploadlimiet 20MB zijn.
+Geen API-keys nodig voor de catalogus (TCGdex). Voor scans mag de reverse-proxy uploadlimiet 20MB zijn.
 
 ## Scripts
 
