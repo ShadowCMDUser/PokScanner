@@ -1,3 +1,10 @@
+export const CARD_CONDITIONS = ["mint", "nm", "lp", "mp", "hp", "dmg"] as const;
+export type CardCondition = (typeof CARD_CONDITIONS)[number];
+
+export const SUPPORTED_LANGS = ["en", "fr", "de", "es", "it"] as const;
+export type Lang = (typeof SUPPORTED_LANGS)[number];
+export type TcgLang = Lang;
+
 export type CardmarketPricing = {
   unit?: string;
   avg?: number;
@@ -76,8 +83,6 @@ export type ScanResponse = {
   foil?: boolean;
 };
 
-export type CardCondition = "mint" | "nm" | "lp" | "mp" | "hp" | "dmg";
-
 export type CollectionEntry = {
   id: string;
   cardId: string;
@@ -104,4 +109,3 @@ export type CollectionResponse = {
 };
 
 export type Page = "scan" | "collection" | "search";
-export type Lang = "en" | "fr" | "de" | "es" | "it";

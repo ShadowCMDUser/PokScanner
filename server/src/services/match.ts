@@ -44,10 +44,17 @@ function levenshtein(a: string, b: string) {
 }
 
 function normalizeName(value: string) {
-  return value
+  const folded = value
     .toLowerCase()
-    .replace(/\s+(ex|gx|v|vmax|vstar|lv\.?x)$/g, "")
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/v[\s.\-]*max/g, " vmax ")
+    .replace(/v[\s.\-]*star/g, " vstar ")
+    .replace(/lv[\s.]*x/g, " lvx ");
+  const tokens = folded.split(/[^a-z0-9]+/).filter(Boolean);
+  const suffixes = new Set(["ex", "gx", "v", "vmax", "vstar", "lvx"]);
+  while (tokens.length > 1 && suffixes.has(tokens[tokens.length - 1] ?? "")) {
+    tokens.pop();
+  }
+  return tokens.join("");
 }
 
 function similarity(a: string, b: string) {
@@ -59,7 +66,7 @@ function similarity(a: string, b: string) {
   return ratio >= 0.84 ? ratio : 0;
 }
 
-function bestNameScore(cardName: string, candidates: string[]) {
+function bestNameScore(cardName: string, candidates: readonly string[]) {
   return candidates.reduce((best, candidate) => Math.max(best, similarity(candidate, cardName)), 0);
 }
 
@@ -146,6 +153,53 @@ function scoreCard(
   }
 
   return { card, score: Math.round(score), reasons };
+}
+
+function zeros(count: number) {
+  return Array.from({ length: count }, () => 0);
+}
+
+function visionScores(result: PromiseSettledResult<number[]>, count: number) {
+  if (result.status !== "fulfilled" || !Array.isArray(result.value) || result.value.length === 0) {
+    return zeros(count);
+  }
+  return Array.from({ length: count }, (_, index) => {
+    const value = result.value[index];
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  });
+}
+
+function scoreAt(scores: number[], index: number) {
+  const value = scores[index];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+async function visualScores(cards: TcgdexCard[], vision?: VisionHints) {
+  const count = cards.length;
+  const empty = zeros(count);
+  if (!vision || count === 0) {
+    return { art: empty, layout: empty, symbol: empty, orb: empty };
+  }
+
+  const images = cards.map((card) => card.image);
+  const settled = await Promise.allSettled([
+    artworkScores(vision.artHash, images),
+    vision.cardHash != null ? layoutScores(vision.cardHash, images) : Promise.resolve(empty),
+    vision.symbolHash != null
+      ? symbolScores(
+          vision.symbolHash,
+          cards.map((card) => card.set?.symbol),
+        )
+      : Promise.resolve(empty),
+    vision.queryImage ? orbScores(vision.queryImage, images) : Promise.resolve(empty),
+  ]);
+
+  return {
+    art: visionScores(settled[0], count),
+    layout: visionScores(settled[1], count),
+    symbol: visionScores(settled[2], count),
+    orb: visionScores(settled[3], count),
+  };
 }
 
 async function lookupCandidates(ocr: OcrResult, lang: TcgLang) {
@@ -243,29 +297,19 @@ export async function matchCard(
     40,
   );
 
+  // hydrateCards slices to 28 and fetches with mapPool concurrency 4 + per-card catch (safe for TCGdex).
   const cards = await hydrateCards(ranked, lang, 28);
-  const images = cards.map((card) => card.image);
-  const visuals = vision ? await artworkScores(vision.artHash, images) : cards.map(() => 0);
-  const layouts =
-    vision?.cardHash != null ? await layoutScores(vision.cardHash, images) : cards.map(() => 0);
-  const symbols =
-    vision?.symbolHash != null
-      ? await symbolScores(
-          vision.symbolHash,
-          cards.map((card) => card.set?.symbol),
-        )
-      : cards.map(() => 0);
-  const orbs = vision?.queryImage ? await orbScores(vision.queryImage, images) : cards.map(() => 0);
+  const { art, layout, symbol, orb } = await visualScores(cards, vision);
 
   const scored = cards
     .map((card, index) =>
       scoreCard(
         card,
         ocr,
-        visuals[index] ?? 0,
-        layouts[index] ?? 0,
-        symbols[index] ?? 0,
-        orbs[index] ?? 0,
+        scoreAt(art, index),
+        scoreAt(layout, index),
+        scoreAt(symbol, index),
+        scoreAt(orb, index),
         vision?.foil ?? false,
       ),
     )

@@ -11,6 +11,7 @@ const LOWE_RATIO = 0.8;
 const MIN_RATIO_MATCHES = 10;
 const MIN_INLIERS = 8;
 const RANSAC_REPROJ = 5.0;
+const CATALOG_CACHE_LIMIT = 750;
 
 type OrbPack = {
   width: number;
@@ -20,14 +21,42 @@ type OrbPack = {
   rows: number;
 };
 
+class LruCache<V> {
+  private readonly map = new Map<string, V>();
+
+  constructor(private readonly max: number) {}
+
+  get(key: string): V | undefined {
+    if (!this.map.has(key)) return undefined;
+    const value = this.map.get(key) as V;
+    this.map.delete(key);
+    this.map.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: V) {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    if (this.map.size <= this.max) return;
+    const oldest = this.map.keys().next().value;
+    if (oldest !== undefined) this.map.delete(oldest);
+  }
+}
+
 let cvPromise: Promise<OpenCv> | null = null;
-const catalogCache = new Map<string, OrbPack | null>();
+const catalogCache = new LruCache<OrbPack | null>(CATALOG_CACHE_LIMIT);
 
 async function getCv() {
   if (!cvPromise) {
     cvPromise = Promise.resolve(cvModule).then((mod) => mod as OpenCv);
   }
   return cvPromise;
+}
+
+function yieldEventLoop() {
+  return new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 async function toGray(buffer: Buffer) {
@@ -42,7 +71,9 @@ async function toGray(buffer: Buffer) {
     })
     .raw()
     .toBuffer({ resolveWithObject: true });
-  return { data, width: info.width, height: info.height };
+  const pixels = new Uint8Array(data.byteLength);
+  pixels.set(data);
+  return { data: pixels, width: info.width, height: info.height };
 }
 
 function extractPack(cv: OpenCv, gray: InstanceType<OpenCv["Mat"]>, features: number): OrbPack | null {
@@ -139,24 +170,15 @@ async function packFromBuffer(cv: OpenCv, buffer: Buffer, features: number) {
   }
 }
 
-async function packFromUrl(cv: OpenCv, url: string) {
-  const cached = catalogCache.get(url);
-  if (cached !== undefined) return cached;
+async function fetchCatalogImage(url: string) {
   try {
     const response = await fetch(url, {
       headers: { Accept: "image/*" },
       signal: AbortSignal.timeout(4000),
     });
-    if (!response.ok) {
-      catalogCache.set(url, null);
-      return null;
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const pack = await packFromBuffer(cv, buffer, DB_FEATURES);
-    catalogCache.set(url, pack);
-    return pack;
+    if (!response.ok) return null;
+    return Buffer.from(await response.arrayBuffer());
   } catch {
-    catalogCache.set(url, null);
     return null;
   }
 }
@@ -172,13 +194,31 @@ export async function orbScores(queryImage: Buffer, imageBases: (string | undefi
     const query = await packFromBuffer(cv, queryImage, QUERY_FEATURES);
     if (!query) return imageBases.map(() => 0);
 
+    const urls = imageBases.map((base) => (base ? cardImageUrl(base, "low") : undefined));
+    const needed = [...new Set(urls.filter((url): url is string => Boolean(url)))].filter(
+      (url) => catalogCache.get(url) === undefined,
+    );
+    const fetched = new Map<string, Buffer | null>();
+    await Promise.all(
+      needed.map(async (url) => {
+        fetched.set(url, await fetchCatalogImage(url));
+      }),
+    );
+
     const scores = new Array<number>(imageBases.length).fill(0);
-    for (let i = 0; i < imageBases.length; i += 1) {
-      const url = cardImageUrl(imageBases[i], "low");
+    for (let i = 0; i < urls.length; i += 1) {
+      const url = urls[i];
       if (!url) continue;
-      const catalog = await packFromUrl(cv, url);
+
+      let catalog = catalogCache.get(url);
+      if (catalog === undefined) {
+        const buffer = fetched.get(url) ?? null;
+        catalog = buffer ? await packFromBuffer(cv, buffer, DB_FEATURES) : null;
+        catalogCache.set(url, catalog);
+      }
       if (!catalog) continue;
       scores[i] = scoreInliers(inliersFor(cv, catalog, query));
+      await yieldEventLoop();
     }
     return scores;
   } catch {

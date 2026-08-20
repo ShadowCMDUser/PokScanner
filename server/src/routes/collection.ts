@@ -8,44 +8,66 @@ import {
 import { getUserId, requireUser } from "../middleware/requireUser.js";
 import { getCardOrNull, normalizeLang } from "../services/tcgdex.js";
 import { catalogIdCandidates } from "../services/clipScan.js";
-import type { CardCondition } from "../types.js";
-
-const CONDITIONS: CardCondition[] = ["mint", "nm", "lp", "mp", "hp", "dmg"];
+import { CARD_CONDITIONS, type CardCondition } from "../types.js";
 
 export const collectionRouter = Router();
 collectionRouter.use(requireUser);
 
-collectionRouter.get("/", (_req, res) => {
-  const cards = listCollection(getUserId(res));
-  const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
-  const totalValue = cards.reduce(
-    (sum, card) => sum + (card.priceEur ?? 0) * card.quantity,
-    0,
-  );
+function parsePositiveInt(value: unknown): number | null {
+  const qty = Number(value);
+  if (!Number.isInteger(qty) || qty <= 0) return null;
+  return qty;
+}
 
-  res.json({
-    cards,
-    stats: {
-      unique: cards.length,
-      totalCards,
-      totalValue: Number(totalValue.toFixed(2)),
-    },
-  });
+function entryId(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+collectionRouter.get("/", async (_req, res) => {
+  try {
+    const cards = await listCollection(getUserId(res));
+    const totalCards = cards.reduce((sum, card) => sum + card.quantity, 0);
+    const totalValue = cards.reduce(
+      (sum, card) => sum + (card.priceEur ?? 0) * card.quantity,
+      0,
+    );
+
+    res.json({
+      cards,
+      stats: {
+        unique: cards.length,
+        totalCards,
+        totalValue: Number(totalValue.toFixed(2)),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Collectie laden mislukt";
+    res.status(500).json({ error: message });
+  }
 });
 
 collectionRouter.post("/", async (req, res) => {
   try {
-    const cardId = String(req.body?.cardId ?? "");
+    const cardId = String(req.body?.cardId ?? "").trim();
     if (!cardId) {
       res.status(400).json({ error: "cardId ontbreekt" });
       return;
     }
 
     const lang = normalizeLang(req.body?.lang);
-    const condition = CONDITIONS.includes(req.body?.condition)
+    const condition = CARD_CONDITIONS.includes(req.body?.condition)
       ? (req.body.condition as CardCondition)
       : "nm";
-    const quantity = Number(req.body?.quantity ?? 1);
+
+    const rawQty = req.body?.quantity;
+    const quantity =
+      rawQty === undefined || rawQty === null ? 1 : parsePositiveInt(rawQty);
+    if (quantity === null) {
+      res.status(400).json({ error: "quantity moet een positief geheel getal zijn" });
+      return;
+    }
+
     let card = null;
     for (const id of catalogIdCandidates(cardId)) {
       card = await getCardOrNull(id, lang);
@@ -55,7 +77,7 @@ collectionRouter.post("/", async (req, res) => {
       res.status(404).json({ error: "Kaart niet gevonden in de catalogus" });
       return;
     }
-    const entry = addToCollection(getUserId(res), card, { condition, quantity });
+    const entry = await addToCollection(getUserId(res), card, { condition, quantity });
     res.status(201).json(entry);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Toevoegen mislukt";
@@ -63,26 +85,65 @@ collectionRouter.post("/", async (req, res) => {
   }
 });
 
-collectionRouter.patch("/:id", (req, res) => {
-  const patch: { quantity?: number; condition?: CardCondition } = {};
-  if (typeof req.body?.quantity === "number") patch.quantity = req.body.quantity;
-  if (CONDITIONS.includes(req.body?.condition)) {
-    patch.condition = req.body.condition;
-  }
+collectionRouter.patch("/:id", async (req, res) => {
+  try {
+    const id = entryId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "id ontbreekt" });
+      return;
+    }
 
-  const entry = updateCollectionEntry(getUserId(res), req.params.id, patch);
-  if (!entry) {
-    res.status(404).json({ error: "Kaart niet gevonden in collectie" });
-    return;
+    const patch: { quantity?: number; condition?: CardCondition } = {};
+    const rawQty = req.body?.quantity;
+    if (rawQty !== undefined && rawQty !== null) {
+      const quantity = parsePositiveInt(rawQty);
+      if (quantity === null) {
+        res.status(400).json({ error: "quantity moet een positief geheel getal zijn" });
+        return;
+      }
+      patch.quantity = quantity;
+    }
+    if (req.body?.condition !== undefined && req.body?.condition !== null) {
+      if (!CARD_CONDITIONS.includes(req.body.condition)) {
+        res.status(400).json({ error: "ongeldige condition" });
+        return;
+      }
+      patch.condition = req.body.condition;
+    }
+
+    if (patch.quantity === undefined && patch.condition === undefined) {
+      res.status(400).json({ error: "Geen geldige velden om bij te werken" });
+      return;
+    }
+
+    const entry = await updateCollectionEntry(getUserId(res), id, patch);
+    if (!entry) {
+      res.status(404).json({ error: "Kaart niet gevonden in collectie" });
+      return;
+    }
+    res.json(entry);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Bijwerken mislukt";
+    res.status(500).json({ error: message });
   }
-  res.json(entry);
 });
 
-collectionRouter.delete("/:id", (req, res) => {
-  const removed = removeCollectionEntry(getUserId(res), req.params.id);
-  if (!removed) {
-    res.status(404).json({ error: "Kaart niet gevonden in collectie" });
-    return;
+collectionRouter.delete("/:id", async (req, res) => {
+  try {
+    const id = entryId(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "id ontbreekt" });
+      return;
+    }
+
+    const removed = await removeCollectionEntry(getUserId(res), id);
+    if (!removed) {
+      res.status(404).json({ error: "Kaart niet gevonden in collectie" });
+      return;
+    }
+    res.status(204).end();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Verwijderen mislukt";
+    res.status(500).json({ error: message });
   }
-  res.status(204).end();
 });

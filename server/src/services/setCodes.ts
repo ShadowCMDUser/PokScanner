@@ -169,30 +169,61 @@ const CODE_SWAPS: Record<string, string> = {
   "4": "A",
   "5": "S",
   "8": "B",
+  O: "0",
+  I: "1",
+  A: "4",
+  S: "5",
+  B: "8",
 };
 
 const extraCodes = new Map<string, string>();
+let codesByLength: string[] | null = null;
+
+function normalizeCode(code: string): string {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 
 export function setIdForCode(code: string | null | undefined): string | undefined {
   if (!code) return undefined;
-  const key = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const key = normalizeCode(code);
   return extraCodes.get(key) ?? SET_CODES[key];
 }
 
-export function rememberSetCode(code: string, setId: string) {
-  extraCodes.set(code.toUpperCase().replace(/[^A-Z0-9]/g, ""), setId);
+export function rememberSetCode(code: string, setId: string): void {
+  const key = normalizeCode(code);
+  if (!key) return;
+  const isNew = !extraCodes.has(key);
+  extraCodes.set(key, setId);
+  if (isNew) codesByLength = null;
 }
 
-export function codeVariants(raw: string) {
-  const upper = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+export function codeVariants(raw: string): string[] {
+  const upper = normalizeCode(raw);
   if (upper.length < 2 || upper.length > 6) return [];
+
   const variants = new Set<string>([upper]);
-  let swapped = "";
-  for (const char of upper) swapped += CODE_SWAPS[char] ?? char;
-  if (swapped !== upper) variants.add(swapped);
+  const chars = [...upper];
+
+  function walk(index: number, current: string): void {
+    if (index === chars.length) {
+      variants.add(current);
+      return;
+    }
+    const char = chars[index];
+    walk(index + 1, current + char);
+    const swapped = CODE_SWAPS[char];
+    if (swapped && swapped !== char) walk(index + 1, current + swapped);
+  }
+
+  walk(0, "");
   return [...variants];
 }
 
-export function knownCodesByLength() {
-  return Object.keys(SET_CODES).sort((a, b) => b.length - a.length);
+export function knownCodesByLength(): string[] {
+  if (!codesByLength) {
+    const keys = new Set<string>(Object.keys(SET_CODES));
+    for (const key of extraCodes.keys()) keys.add(key);
+    codesByLength = [...keys].sort((a, b) => b.length - a.length);
+  }
+  return codesByLength;
 }

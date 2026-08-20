@@ -262,7 +262,7 @@ img {
   transform: translate(-50%, -50%);
   border: 2px solid rgba(255, 255, 255, 0.55);
   border-radius: 14px;
-  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
 

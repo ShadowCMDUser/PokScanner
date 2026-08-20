@@ -8,17 +8,28 @@ import {
 
 export const searchRouter = Router();
 
+const SEARCH_HYDRATE_LIMIT = 24;
+
+function firstQueryValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return firstQueryValue(value[0]);
+  return "";
+}
+
 searchRouter.get("/", async (req, res) => {
   try {
-    const q = String(req.query.q ?? "").trim();
+    const q = firstQueryValue(req.query.q).trim();
     if (q.length < 2) {
       res.json([]);
       return;
     }
 
-    const lang = normalizeLang(String(req.query.lang ?? "en"));
-    const briefs = await searchAllCards(lang, { name: q }, 300);
-    const cards = await hydrateCards(briefs, lang, briefs.length);
+    const lang = normalizeLang(firstQueryValue(req.query.lang) || "en");
+    const briefs = (await searchAllCards(lang, { name: q }, SEARCH_HYDRATE_LIMIT)).slice(
+      0,
+      SEARCH_HYDRATE_LIMIT,
+    );
+    const cards = await hydrateCards(briefs, lang, SEARCH_HYDRATE_LIMIT);
     res.json(cards);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Zoeken mislukt";
@@ -28,7 +39,7 @@ searchRouter.get("/", async (req, res) => {
 
 searchRouter.get("/:id", async (req, res) => {
   try {
-    const lang = normalizeLang(String(req.query.lang ?? "en"));
+    const lang = normalizeLang(firstQueryValue(req.query.lang) || "en");
     const card = await getCard(req.params.id, lang);
     res.json(card);
   } catch (error) {

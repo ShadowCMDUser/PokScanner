@@ -2,15 +2,18 @@ import sharp from "sharp";
 import { extractIllustration } from "./image.js";
 import { cardImageUrl, setSymbolUrl } from "./tcgdex.js";
 
-const hashCache = new Map<string, bigint>();
+const hashCache = new Map<string, Promise<bigint | null>>();
 const HASH_CACHE_MAX = 1500;
+const MAX_HASH_BYTES = 5 * 1024 * 1024;
 
-function remember(url: string, hash: bigint) {
-  if (hashCache.size >= HASH_CACHE_MAX) {
-    const first = hashCache.keys().next().value;
-    if (first) hashCache.delete(first);
+function touchCache(key: string, value: Promise<bigint | null>) {
+  hashCache.delete(key);
+  hashCache.set(key, value);
+  while (hashCache.size > HASH_CACHE_MAX) {
+    const oldest = hashCache.keys().next().value;
+    if (oldest === undefined) break;
+    hashCache.delete(oldest);
   }
-  hashCache.set(url, hash);
 }
 
 export async function differenceHash(input: Buffer) {
@@ -68,32 +71,56 @@ export async function symbolHash(input: Buffer) {
   }
 }
 
-async function hashFromUrl(url: string, cropArt: boolean, trim = false) {
-  const cacheKey = `${cropArt ? "art" : trim ? "symbol" : "full"}:${url}`;
-  const cached = hashCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
+async function loadHash(url: string, cropArt: boolean, trim: boolean): Promise<bigint | null> {
   const response = await fetch(url, {
     headers: { Accept: "image/*" },
     signal: AbortSignal.timeout(4000),
   });
   if (!response.ok) return null;
+
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_HASH_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+
   const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > MAX_HASH_BYTES) return null;
+
   const source = cropArt ? ((await extractIllustration(buffer)) ?? buffer) : buffer;
-  const hash = trim ? await symbolHash(source) : await differenceHash(source);
-  remember(cacheKey, hash);
-  return hash;
+  return trim ? await symbolHash(source) : await differenceHash(source);
 }
 
-async function mapPool<T, R>(items: T[], limit: number, mapper: (item: T, index: number) => Promise<R>) {
-  const out = new Array<R>(items.length);
+async function hashFromUrl(url: string, cropArt: boolean, trim = false) {
+  const cacheKey = `${cropArt ? "art" : trim ? "symbol" : "full"}:${url}`;
+  const cached = hashCache.get(cacheKey);
+  if (cached) {
+    touchCache(cacheKey, cached);
+    return cached;
+  }
+
+  const pending = loadHash(url, cropArt, trim).catch(() => null);
+  touchCache(cacheKey, pending);
+  return pending;
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<(R | null)[]> {
+  const out = new Array<R | null>(items.length).fill(null);
   let next = 0;
 
   async function worker() {
     while (next < items.length) {
       const index = next;
       next += 1;
-      out[index] = await mapper(items[index], index);
+      try {
+        out[index] = await mapper(items[index], index);
+      } catch {
+        out[index] = null;
+      }
     }
   }
 
@@ -108,7 +135,7 @@ function hashScore(scanHash: bigint, catalogHash: bigint) {
 }
 
 async function compareImages(scanHash: bigint, imageBases: (string | undefined)[], cropArt: boolean) {
-  return mapPool(imageBases, 8, async (image) => {
+  const scores = await mapPool(imageBases, 8, async (image) => {
     const url = cardImageUrl(image, "low");
     if (!url) return 0;
     try {
@@ -119,6 +146,7 @@ async function compareImages(scanHash: bigint, imageBases: (string | undefined)[
       return 0;
     }
   });
+  return scores.map((score) => score ?? 0);
 }
 
 export async function artworkScores(scanHash: bigint, imageBases: (string | undefined)[]) {
@@ -130,7 +158,7 @@ export async function layoutScores(scanHash: bigint, imageBases: (string | undef
 }
 
 export async function symbolScores(scanHash: bigint, symbolBases: (string | undefined)[]) {
-  return mapPool(symbolBases, 8, async (symbol) => {
+  const scores = await mapPool(symbolBases, 8, async (symbol) => {
     const url = setSymbolUrl(symbol);
     if (!url) return 0;
     try {
@@ -143,4 +171,5 @@ export async function symbolScores(scanHash: bigint, symbolBases: (string | unde
       return 0;
     }
   });
+  return scores.map((score) => score ?? 0);
 }

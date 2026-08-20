@@ -7,15 +7,17 @@ import { PokeballIcon } from "./components/Pokeball";
 import { Scanner } from "./components/Scanner";
 import { Search } from "./components/Search";
 import { ScanActionProvider, useScanAction } from "./ScanAction";
-import type { CardCondition, Lang, Page, TcgdexCard } from "./types";
+import { SUPPORTED_LANGS, type CardCondition, type Lang, type Page, type TcgdexCard } from "./types";
 
-const LANGS: { id: Lang; label: string }[] = [
-  { id: "en", label: "EN" },
-  { id: "fr", label: "FR" },
-  { id: "de", label: "DE" },
-  { id: "es", label: "ES" },
-  { id: "it", label: "IT" },
-];
+const LANG_LABELS: Record<Lang, string> = {
+  en: "EN",
+  fr: "FR",
+  de: "DE",
+  es: "ES",
+  it: "IT",
+};
+
+const LANGS = SUPPORTED_LANGS.map((id) => ({ id, label: LANG_LABELS[id] }));
 
 function pageFromHash(): Page {
   const hash = window.location.hash.replace(/^#\/?/, "");
@@ -91,8 +93,6 @@ function AppShell({
   setLang: (lang: Lang) => void;
   onAdd: (card: TcgdexCard, condition: CardCondition) => Promise<void>;
 }) {
-  const { handle } = useScanAction();
-
   return (
     <div className={`app${page === "scan" ? " app-scan" : ""}`}>
       <header className="topbar">
@@ -150,19 +150,7 @@ function AppShell({
           </svg>
           Collectie
         </button>
-        <button
-          className={`tab-scan${page === "scan" ? " active" : ""}`}
-          onClick={() => {
-            if (page !== "scan") {
-              goTo("scan");
-              return;
-            }
-            handle?.capture();
-          }}
-          aria-label="Scan"
-        >
-          <PokeballIcon spin={Boolean(handle?.scanning)} />
-        </button>
+        <ScanTabButton page={page} goTo={goTo} />
         <button className={page === "search" ? "active" : ""} onClick={() => goTo("search")}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
@@ -172,5 +160,24 @@ function AppShell({
         </button>
       </nav>
     </div>
+  );
+}
+
+function ScanTabButton({ page, goTo }: { page: Page; goTo: (page: Page) => void }) {
+  const { handle } = useScanAction();
+  return (
+    <button
+      className={`tab-scan${page === "scan" ? " active" : ""}`}
+      onClick={() => {
+        if (page !== "scan") {
+          goTo("scan");
+          return;
+        }
+        handle?.capture();
+      }}
+      aria-label="Scan"
+    >
+      <PokeballIcon spin={Boolean(handle?.scanning)} />
+    </button>
   );
 }

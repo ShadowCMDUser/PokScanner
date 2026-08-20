@@ -18,7 +18,7 @@ function resolveSecret() {
   }
 
   const generated = randomBytes(32).toString("hex");
-  writeFileSync(secretPath, generated, "utf8");
+  writeFileSync(secretPath, generated, { encoding: "utf8", mode: 0o600 });
   console.warn("BETTER_AUTH_SECRET ontbrak; er is een secret weggeschreven in data/auth-secret");
   return generated;
 }
@@ -54,12 +54,21 @@ export const auth = betterAuth({
 });
 
 export async function migrateAuth() {
-  const { runMigrations, toBeCreated } = await getMigrations(auth.options);
-  await runMigrations();
-  if (toBeCreated.length) {
-    console.log(
-      "Auth-tabellen aangemaakt:",
-      toBeCreated.map((table) => table.table).join(", "),
-    );
+  try {
+    const { runMigrations, toBeCreated } = await getMigrations(auth.options);
+    await runMigrations();
+    if (toBeCreated.length) {
+      console.log(
+        "Auth-tabellen aangemaakt:",
+        toBeCreated.map((table) => table.table).join(", "),
+      );
+    }
+  } catch (error) {
+    console.error("Auth-migratie mislukt:", error);
+    throw error;
   }
+}
+
+export function closeAuthDb() {
+  if (sqlite.open) sqlite.close();
 }

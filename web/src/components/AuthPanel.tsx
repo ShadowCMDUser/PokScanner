@@ -1,17 +1,34 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { authClient } from "../auth-client";
 
 type Props = {
   onDone?: () => void;
 };
 
+type AuthMode = "login" | "register";
+
 export function AuthPanel({ onDone }: Props) {
-  const [mode, setMode] = useState<"login" | "register">("register");
+  const [mode, setMode] = useState<AuthMode>("register");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  function switchMode(next: AuthMode) {
+    if (busy || next === mode) return;
+    setMode(next);
+    setError(null);
+    setPassword("");
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -31,19 +48,31 @@ export function AuthPanel({ onDone }: Props) {
       }
       onDone?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Inloggen mislukt");
+      if (mounted.current) {
+        setError(err instanceof Error ? err.message : "Inloggen mislukt");
+      }
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 
   return (
     <div className="auth-panel">
       <div className="seg">
-        <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
+        <button
+          type="button"
+          className={mode === "register" ? "active" : ""}
+          disabled={busy}
+          onClick={() => switchMode("register")}
+        >
           Account
         </button>
-        <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
+        <button
+          type="button"
+          className={mode === "login" ? "active" : ""}
+          disabled={busy}
+          onClick={() => switchMode("login")}
+        >
           Inloggen
         </button>
       </div>
@@ -56,6 +85,7 @@ export function AuthPanel({ onDone }: Props) {
             placeholder="Naam"
             autoComplete="name"
             enterKeyHint="next"
+            disabled={busy}
           />
         )}
         <input
@@ -67,6 +97,7 @@ export function AuthPanel({ onDone }: Props) {
           placeholder="E-mail"
           autoComplete="email"
           required
+          disabled={busy}
         />
         <input
           className="field"
@@ -77,6 +108,7 @@ export function AuthPanel({ onDone }: Props) {
           autoComplete={mode === "login" ? "current-password" : "new-password"}
           minLength={8}
           required
+          disabled={busy}
         />
         {error && <div className="error">{error}</div>}
         <button className="btn primary" disabled={busy}>

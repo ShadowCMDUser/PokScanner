@@ -3,7 +3,7 @@ import cors from "cors";
 import express from "express";
 import { join } from "node:path";
 import { toNodeHandler, fromNodeHeaders } from "better-auth/node";
-import { auth, migrateAuth } from "./auth.js";
+import { auth, closeAuthDb, migrateAuth } from "./auth.js";
 import { hasWebBuild, webDistDir } from "./paths.js";
 import { collectionRouter } from "./routes/collection.js";
 import { scanRouter } from "./routes/scan.js";
@@ -79,7 +79,21 @@ app.use((error: Error, _req: express.Request, res: express.Response, next: expre
 
 await migrateAuth();
 
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.log(`PokScanner luistert op http://${host}:${port}`);
   void wakeupScanner();
 });
+
+function shutdown() {
+  server.close(() => {
+    try {
+      closeAuthDb();
+    } catch (error) {
+      console.error("Auth-database sluiten mislukt:", error);
+    }
+    process.exit(0);
+  });
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

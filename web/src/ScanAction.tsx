@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from "react";
 
 export type ScanHandle = {
   capture: () => void;
@@ -11,16 +11,48 @@ type ScanAction = {
   register: (next: ScanHandle | null) => void;
 };
 
-const ScanActionContext = createContext<ScanAction | null>(null);
+type Listener = () => void;
 
-export function ScanActionProvider({ children }: { children: ReactNode }) {
-  const [handle, register] = useState<ScanHandle | null>(null);
-  const value = useMemo(() => ({ handle, register }), [handle]);
-  return <ScanActionContext.Provider value={value}>{children}</ScanActionContext.Provider>;
+type ScanStore = {
+  getSnapshot: () => ScanHandle | null;
+  subscribe: (listener: Listener) => () => void;
+  register: (next: ScanHandle | null) => void;
+};
+
+function sameHandle(left: ScanHandle | null, right: ScanHandle | null) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.capture === right.capture && left.scanning === right.scanning && left.busy === right.busy;
 }
 
-export function useScanAction() {
-  const context = useContext(ScanActionContext);
-  if (!context) throw new Error("ScanActionProvider ontbreekt");
-  return context;
+function createScanStore(): ScanStore {
+  let handle: ScanHandle | null = null;
+  const listeners = new Set<Listener>();
+
+  return {
+    getSnapshot: () => handle,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    register: (next) => {
+      if (sameHandle(handle, next)) return;
+      handle = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
+
+const ScanActionContext = createContext<ScanStore | null>(null);
+
+export function ScanActionProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(createScanStore);
+  return <ScanActionContext.Provider value={store}>{children}</ScanActionContext.Provider>;
+}
+
+export function useScanAction(): ScanAction {
+  const store = useContext(ScanActionContext);
+  if (!store) throw new Error("ScanActionProvider ontbreekt");
+  const handle = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return { handle, register: store.register };
 }

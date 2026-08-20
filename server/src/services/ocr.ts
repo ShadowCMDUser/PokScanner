@@ -35,42 +35,52 @@ const CODE_NOISE = new Set([
 const EVOLVES_FROM =
   /(?:evolves?\s+from|evolue\s+de|évolue\s+de|entwickelt\s+sich\s+aus)\s+([A-Za-z][A-Za-z '\-]{2,24})/i;
 
-let workerPromise: Promise<Worker> | null = null;
-let queue: Promise<unknown> = Promise.resolve();
+const OCR_TIMEOUT_MS = 7_000;
+const EMPTY_OCR = { text: "", confidence: 0 };
 
-async function getWorker() {
-  if (!workerPromise) {
-    workerPromise = (async () => {
-      const worker = await createWorker("eng", 1, {
-        logger: () => undefined,
-        cachePath: join(dataDir, "tesscache"),
-      });
-      return worker;
-    })();
-  }
-  return workerPromise;
+async function createOcrWorker() {
+  return createWorker("eng", 1, {
+    logger: () => undefined,
+    cachePath: join(dataDir, "tesscache"),
+  });
 }
 
-async function recognize(image: Buffer, psm: PSM, whitelist?: string) {
-  const run = async () => {
-    const worker = await getWorker();
+async function terminateWorker(worker: Worker | null) {
+  if (!worker) return;
+  try {
+    await worker.terminate();
+  } catch {
+    // Worker may already be dead after a hang or WASM crash.
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("OCR_TIMEOUT")), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function recognize(worker: Worker, image: Buffer, psm: PSM, whitelist?: string) {
+  try {
     await worker.setParameters({
       tessedit_pageseg_mode: psm,
       tessedit_char_whitelist: whitelist ?? "",
       user_defined_dpi: "300",
     });
-    const { data } = await worker.recognize(image);
+    const { data } = await withTimeout(worker.recognize(image), OCR_TIMEOUT_MS);
     return {
       text: data.text ?? "",
       confidence: data.confidence ?? 0,
+      killed: false,
     };
-  };
-  const next = queue.then(run, run);
-  queue = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
+  } catch {
+    await terminateWorker(worker);
+    return { ...EMPTY_OCR, killed: true };
+  }
 }
 
 function tidy(text: string) {
@@ -368,20 +378,34 @@ function mergeCompatible(into: StampId, parsed: Omit<StampId, "rawText" | "confi
 export async function readStamp(images: Buffer[]): Promise<StampId> {
   const merged = emptyStamp();
   const complete: StampId[] = [];
+  let worker: Worker | null = null;
 
-  for (const image of images) {
-    const result = await recognize(image, PSM.SPARSE_TEXT, STAMP_CHARS);
-    const parsed = extractStampId(result.text);
-    const candidate: StampId = {
-      ...parsed,
-      rawText: result.text,
-      confidence: result.confidence,
-    };
-    if (candidate.setCode && candidate.collectorNumber) complete.push(candidate);
-    mergeCompatible(merged, parsed);
-    if (result.text.trim()) merged.rawText = [merged.rawText, result.text].filter(Boolean).join("\n");
-    merged.confidence = Math.max(merged.confidence, result.confidence);
-    if (candidate.setCode && candidate.collectorNumber && candidate.setTotal) break;
+  try {
+    worker = await createOcrWorker();
+
+    for (const image of images) {
+      const result = await recognize(worker, image, PSM.SPARSE_TEXT, STAMP_CHARS);
+      if (result.killed) {
+        worker = await createOcrWorker();
+      }
+      const parsed = extractStampId(result.text);
+      const candidate: StampId = {
+        ...parsed,
+        rawText: result.text,
+        confidence: result.confidence,
+      };
+      if (candidate.setCode && candidate.collectorNumber) complete.push(candidate);
+      mergeCompatible(merged, parsed);
+      if (result.text.trim()) merged.rawText = [merged.rawText, result.text].filter(Boolean).join("\n");
+      merged.confidence = Math.max(merged.confidence, result.confidence);
+      if (candidate.setCode && candidate.collectorNumber && candidate.setTotal) break;
+    }
+  } catch {
+    return complete.length
+      ? complete.sort((a, b) => stampRank(b) - stampRank(a) || b.confidence - a.confidence)[0]
+      : merged;
+  } finally {
+    await terminateWorker(worker);
   }
 
   if (complete.length) {

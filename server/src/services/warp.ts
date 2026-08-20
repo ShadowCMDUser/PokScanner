@@ -385,6 +385,9 @@ export async function flattenCard(input: Buffer) {
   const height = meta.height ?? 0;
   if (!width || !height) return source;
 
+  const ratio = width / Math.max(height, 1);
+  if (ratio > 0.58 && ratio < 0.88) return source;
+
   const probeW = 480;
   const probeH = Math.max(180, Math.round((probeW * height) / width));
   const { data } = await sharp(source)

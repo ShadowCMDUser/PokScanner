@@ -41,17 +41,17 @@ export function trendPrice(card: TcgdexCard, foil = false) {
   return market.trend ?? market["trend-holo"] ?? market.avg ?? market.low ?? null;
 }
 
-export async function scanCard(file: Blob, lang: Lang) {
+export async function scanCard(file: Blob, lang: Lang, signal?: AbortSignal) {
   const form = new FormData();
   form.append("image", file, "scan.jpg");
   form.append("lang", lang);
-  const response = await fetch("/api/scan", { method: "POST", body: form, ...credentials });
+  const response = await fetch("/api/scan", { method: "POST", body: form, ...credentials, signal });
   return parseJson<ScanResponse>(response);
 }
 
-export async function searchCards(query: string, lang: Lang) {
+export async function searchCards(query: string, lang: Lang, signal?: AbortSignal) {
   const params = new URLSearchParams({ q: query, lang });
-  const response = await fetch(`/api/cards?${params}`, credentials);
+  const response = await fetch(`/api/cards?${params}`, { ...credentials, signal });
   return parseJson<TcgdexCard[]>(response);
 }
 

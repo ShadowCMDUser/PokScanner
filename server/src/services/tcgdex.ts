@@ -1,14 +1,20 @@
-import type {
-  CardmarketPricing,
-  TcgdexCard,
-  TcgdexCardBrief,
+import {
+  SUPPORTED_LANGS,
+  type CardmarketPricing,
+  type TcgdexCard,
+  type TcgdexCardBrief,
+  type TcgLang,
 } from "../types.js";
 import { rememberSetCode, setIdForCode } from "./setCodes.js";
 
-const BASE = "https://api.tcgdex.net/v2";
-const SUPPORTED_LANGS = ["en", "fr", "de", "es", "it"] as const;
+export type { TcgLang };
 
-export type TcgLang = (typeof SUPPORTED_LANGS)[number];
+const BASE = "https://api.tcgdex.net/v2";
+const MAX_FETCH_RETRIES = 3;
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+const FETCH_TIMEOUT_MS = 12_000;
+const ABBREV_PROBE_CONCURRENCY = 2;
+const ABBREV_FALLBACK_LIMIT = 12;
 
 export function normalizeLang(value?: string): TcgLang {
   const lang = (value ?? "en").toLowerCase();
@@ -42,24 +48,66 @@ export function trendPriceEur(card: TcgdexCard): number | null {
 function queryString(params: Record<string, string | number | undefined>) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== "") {
-      search.set(key, String(value));
-    }
+    if (value === undefined || value === "") continue;
+    const text: string = typeof value === "number" ? String(value) : value;
+    search.set(key, text);
   }
   const encoded = search.toString();
   return encoded ? `?${encoded}` : "";
 }
 
-async function tcgFetch<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
-    headers: { Accept: "application/json" },
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`TCGdex gaf ${response.status} terug voor ${path}`);
+function retryDelay(attempt: number, retryAfterHeader: string | null) {
+  const retryAfter = Number(retryAfterHeader);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1000, 8_000);
+  }
+  return Math.min(300 * 2 ** attempt, 4_000);
+}
+
+function isRetryableFailure(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.name === "TimeoutError" || error.name === "AbortError" || error instanceof TypeError;
+}
+
+async function tcgFetch<T>(path: string): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_FETCH_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(path, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+
+      if (response.ok) {
+        return (await response.json()) as T;
+      }
+
+      const retryable = RETRY_STATUSES.has(response.status);
+      lastError = new Error(`TCGdex gaf ${response.status} terug voor ${path}`);
+      if (!retryable || attempt === MAX_FETCH_RETRIES) {
+        throw lastError;
+      }
+      await wait(retryDelay(attempt, response.headers.get("retry-after")));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("TCGdex gaf")) {
+        throw error;
+      }
+      lastError = error instanceof Error ? error : new Error(`TCGdex request mislukt voor ${path}`);
+      if (!isRetryableFailure(lastError) || attempt === MAX_FETCH_RETRIES) {
+        throw lastError;
+      }
+      await wait(retryDelay(attempt, null));
+    }
   }
 
-  return (await response.json()) as T;
+  throw lastError ?? new Error(`TCGdex request mislukt voor ${path}`);
 }
 
 export async function getCard(id: string, lang: TcgLang): Promise<TcgdexCard> {
@@ -167,27 +215,35 @@ type SetDetail = SetBrief & {
 };
 
 async function lookupSetIdByAbbreviation(lang: TcgLang, code: string, setTotal?: string | null) {
+  const known = setIdForCode(code);
+  if (known) return known;
+
   const sets = await listSets(lang);
-  const ranked = setTotal
-    ? [
-        ...sets.filter(
-          (set) => sameCount(set.cardCount?.official, setTotal) || sameCount(set.cardCount?.total, setTotal),
-        ),
-        ...sets,
-      ]
-    : sets;
-  const unique = [...new Map(ranked.map((set) => [set.id, set])).values()].slice(0, 48);
-  const found = await mapPool(unique, 10, async (set) => {
-    try {
-      const detail = await tcgFetch<SetDetail>(`${BASE}/${lang}/sets/${encodeURIComponent(set.id)}`);
-      const official = (detail.abbreviation?.official ?? detail.abbreviations?.official ?? "").toUpperCase();
-      if (official) rememberSetCode(official, set.id);
-      return official === code ? set.id : null;
-    } catch {
-      return null;
-    }
+  const matching = setTotal
+    ? sets.filter(
+        (set) => sameCount(set.cardCount?.official, setTotal) || sameCount(set.cardCount?.total, setTotal),
+      )
+    : [];
+  const newestFirst = [...sets].reverse();
+  const ranked = [
+    ...matching,
+    ...newestFirst.filter((set) => !matching.some((hit) => hit.id === set.id)),
+  ];
+  const unique = [...new Map(ranked.map((set) => [set.id, set])).values()].slice(
+    0,
+    Math.max(matching.length, ABBREV_FALLBACK_LIMIT),
+  );
+
+  let found: string | null = null;
+  await mapPool(unique, ABBREV_PROBE_CONCURRENCY, async (set) => {
+    if (found || setIdForCode(code)) return null;
+    const detail = await tcgFetch<SetDetail>(`${BASE}/${lang}/sets/${encodeURIComponent(set.id)}`);
+    const official = (detail.abbreviation?.official ?? detail.abbreviations?.official ?? "").toUpperCase();
+    if (official) rememberSetCode(official, set.id);
+    if (official === code) found = set.id;
+    return found;
   });
-  return found.find((id): id is string => Boolean(id)) ?? null;
+  return found ?? setIdForCode(code) ?? null;
 }
 
 export async function resolveSetId(lang: TcgLang, setCode: string, setTotal?: string | null) {
@@ -217,7 +273,7 @@ export async function cardsByLocalId(lang: TcgLang, localId: string): Promise<Tc
   const found = await mapPool(localIdVariants(localId), 3, (local) =>
     searchCards(lang, { localId: local, itemsPerPage: 40 }),
   );
-  return uniqueBriefs(found.flat()).slice(0, 40);
+  return uniqueBriefs(found.flatMap((item) => item ?? [])).slice(0, 40);
 }
 
 export async function cardsByCollector(
@@ -232,7 +288,7 @@ export async function cardsByCollector(
     })
     .slice(0, 24);
   const variants = localIdVariants(localId);
-  const found = await mapPool(matched, 8, async (set) => {
+  const found = await mapPool(matched, 4, async (set) => {
     for (const local of variants) {
       const card = await getCardOrNull(`${set.id}-${local}`, lang);
       if (card) return card;
@@ -242,15 +298,23 @@ export async function cardsByCollector(
   return found.filter((card): card is NonNullable<typeof card> => Boolean(card));
 }
 
-async function mapPool<T, R>(items: T[], limit: number, mapper: (item: T, index: number) => Promise<R>) {
-  const out = new Array<R>(items.length);
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<(R | null)[]> {
+  const out = new Array<R | null>(items.length).fill(null);
   let next = 0;
 
   async function worker() {
     while (next < items.length) {
       const index = next;
       next += 1;
-      out[index] = await mapper(items[index], index);
+      try {
+        out[index] = await mapper(items[index], index);
+      } catch {
+        out[index] = null;
+      }
     }
   }
 
@@ -265,7 +329,7 @@ export async function hydrateCards(
 ): Promise<TcgdexCard[]> {
   const slice = uniqueBriefs(briefs).slice(0, limit);
 
-  return mapPool(slice, 10, async (brief) => {
+  return mapPool(slice, 4, async (brief) => {
     try {
       return await getCard(brief.id, lang);
     } catch {
@@ -274,5 +338,5 @@ export async function hydrateCards(
         pricing: { cardmarket: {} as CardmarketPricing },
       } satisfies TcgdexCard;
     }
-  });
+  }).then((cards) => cards.filter((card): card is TcgdexCard => Boolean(card)));
 }

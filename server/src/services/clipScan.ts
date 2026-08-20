@@ -9,6 +9,7 @@ import {
 const SCANNER_API =
   process.env.SCANNER_API_URL ?? "https://shreyshingala-pokemon-scanner-api.hf.space";
 const MIN_SIMILARITY = 0.5;
+const POKE_MAX_RETRIES = 3;
 
 type ClipMatch = {
   rank?: number;
@@ -50,6 +51,12 @@ export type ClipLookup = {
 
 function unique<T>(items: T[]) {
   return [...new Set(items)];
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function normalize(value: string) {
@@ -135,24 +142,49 @@ function toCardFromPoke(data: PokeTcgCard): TcgdexCard {
 }
 
 async function fetchPokeTcg(id: string) {
-  const response = await fetch(`https://api.pokemontcg.io/v2/cards/${encodeURIComponent(id)}`, {
-    headers: process.env.POKEMONTCG_API_KEY
-      ? { "X-Api-Key": process.env.POKEMONTCG_API_KEY }
-      : undefined,
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) return null;
-  const body = (await response.json()) as { data?: PokeTcgCard };
-  return body.data ?? null;
+  const url = `https://api.pokemontcg.io/v2/cards/${encodeURIComponent(id)}`;
+  const headers = process.env.POKEMONTCG_API_KEY
+    ? { "X-Api-Key": process.env.POKEMONTCG_API_KEY }
+    : undefined;
+
+  for (let attempt = 0; attempt <= POKE_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt === POKE_MAX_RETRIES) return null;
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const delay =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, 4_000)
+            : 200 * 2 ** attempt;
+        await wait(delay);
+        continue;
+      }
+
+      if (!response.ok) return null;
+      const body = (await response.json()) as { data?: PokeTcgCard };
+      return body.data ?? null;
+    } catch {
+      if (attempt === POKE_MAX_RETRIES) return null;
+      await wait(200 * 2 ** attempt);
+    }
+  }
+
+  return null;
 }
 
 async function resolveTcgdexCard(
   parsed: NonNullable<ReturnType<typeof parseClipFilename>>,
   lang: TcgLang,
 ) {
-  const found = await Promise.all(
-    idCandidates(parsed.set, parsed.number).map(async (id) => getCardOrNull(id, lang)),
-  );
+  const found: Array<TcgdexCard | null> = [];
+  for (const id of idCandidates(parsed.set, parsed.number)) {
+    found.push(await getCardOrNull(id, lang));
+  }
   const named = found.find((card) => card && namesAlign(card.name, parsed.name));
   if (named) return named;
   const any = found.find((card) => Boolean(card));
@@ -194,15 +226,19 @@ async function resolveMatch(
 export async function wakeupScanner() {
   try {
     await fetch(`${SCANNER_API}/`, { signal: AbortSignal.timeout(15000) });
-  } catch {
-    // Space may be cold; the first scan will wake it.
+  } catch (error) {
+    const timedOut =
+      error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    if (timedOut) {
+      console.log("CLIP scanner Hugging Face space is cold-starting (can take 2–3 minutes)");
+    }
   }
 }
 
 export async function scanWithClip(image: Buffer, langInput?: string): Promise<ClipLookup> {
   const lang = normalizeLang(langInput);
   const form = new FormData();
-  form.append("file", new File([new Uint8Array(image)], "card.jpg", { type: "image/jpeg" }));
+  form.append("file", new Blob([new Uint8Array(image)], { type: "image/jpeg" }), "card.jpg");
 
   const response = await fetch(`${SCANNER_API}/scan_card/`, {
     method: "POST",
@@ -233,18 +269,20 @@ export async function scanWithClip(image: Buffer, langInput?: string): Promise<C
   });
 
   const ocrName = payload.card_info?.name ?? parsed[0]?.info.name ?? "";
-  const resolved = await Promise.all(
-    parsed.slice(0, 5).map(async ({ info, similarity }) => {
-      const card = await resolveMatch(info, lang);
-      if (!card) return null;
-      const score = Math.round(similarity * 100);
-      return {
-        card,
-        score,
-        reasons: [`clip ${score}%`, info.set, `#${info.number}`],
-      } satisfies ScoredMatch;
-    }),
-  );
+  const resolved: Array<ScoredMatch | null> = [];
+  for (const { info, similarity } of parsed.slice(0, 5)) {
+    const card = await resolveMatch(info, lang);
+    if (!card) {
+      resolved.push(null);
+      continue;
+    }
+    const score = Math.round(similarity * 100);
+    resolved.push({
+      card,
+      score,
+      reasons: [`clip ${score}%`, info.set, `#${info.number}`],
+    } satisfies ScoredMatch);
+  }
 
   const matches = resolved.filter((match): match is ScoredMatch => Boolean(match));
 
