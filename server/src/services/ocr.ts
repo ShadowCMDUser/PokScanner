@@ -207,19 +207,19 @@ export function extractSetCode(text: string) {
   const lang = "(?:EN|IN|FN|EH|EJ|EL|FR|DE|ES|IT|PT|NL|JP)";
 
   for (const code of knownCodesByLength()) {
-    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 2) continue;
     const besideNumber = new RegExp(`${code}${lang}?\\d{1,3}[\\/7]\\d{2,4}`);
     if (besideNumber.test(compact)) return code;
   }
 
   for (const code of knownCodesByLength()) {
-    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 2) continue;
     const withLang = new RegExp(`(?<![A-Z0-9])${code}\\s*${lang}\\b`);
     if (withLang.test(upper)) return code;
   }
 
   for (const code of knownCodesByLength()) {
-    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 2) continue;
     const at = compact.indexOf(code);
     if (at < 0) continue;
     const after = compact.slice(at + code.length, at + code.length + 10);

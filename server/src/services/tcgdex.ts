@@ -261,10 +261,14 @@ export async function cardsBySetStamp(
 ): Promise<TcgdexCard[]> {
   const setId = await resolveSetId(lang, setCode, setTotal);
   if (!setId) return [];
+  const langs: TcgLang[] = lang === "ja" ? ["ja"] : [lang, "ja"];
   const found: TcgdexCard[] = [];
-  for (const local of localIdVariants(localId)) {
-    const card = await getCardOrNull(`${setId}-${local}`, lang);
-    if (card) found.push(card);
+  for (const useLang of langs) {
+    for (const local of localIdVariants(localId)) {
+      const card = await getCardOrNull(`${setId}-${local}`, useLang);
+      if (card) found.push(card);
+    }
+    if (found.length) break;
   }
   return found;
 }

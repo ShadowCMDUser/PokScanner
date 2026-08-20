@@ -15,6 +15,7 @@ const LANG_LABELS: Record<Lang, string> = {
   de: "DE",
   es: "ES",
   it: "IT",
+  ja: "JP",
 };
 
 const LANGS = SUPPORTED_LANGS.map((id) => ({ id, label: LANG_LABELS[id] }));

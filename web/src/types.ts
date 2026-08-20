@@ -1,7 +1,7 @@
 export const CARD_CONDITIONS = ["mint", "nm", "lp", "mp", "hp", "dmg"] as const;
 export type CardCondition = (typeof CARD_CONDITIONS)[number];
 
-export const SUPPORTED_LANGS = ["en", "fr", "de", "es", "it"] as const;
+export const SUPPORTED_LANGS = ["en", "fr", "de", "es", "it", "ja"] as const;
 export type Lang = (typeof SUPPORTED_LANGS)[number];
 export type TcgLang = Lang;
 
