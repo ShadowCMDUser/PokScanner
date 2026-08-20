@@ -1,20 +1,25 @@
 import { logError, publicError } from "../publicError.js";
 import { Router } from "express";
 import {
+  cardsFromBriefs,
   getCard,
-  hydrateCards,
+  getCardOrNull,
   normalizeLang,
   searchAllCards,
 } from "../services/tcgdex.js";
 
 export const searchRouter = Router();
 
-const SEARCH_HYDRATE_LIMIT = 24;
+const SEARCH_LIMIT = 400;
 
 function firstQueryValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return firstQueryValue(value[0]);
   return "";
+}
+
+function isCardId(query: string) {
+  return /^[a-z0-9]+(?:\.[a-z0-9]+)?-\S+$/i.test(query) && !query.includes(" ");
 }
 
 searchRouter.get("/", async (req, res) => {
@@ -26,11 +31,22 @@ searchRouter.get("/", async (req, res) => {
     }
 
     const lang = normalizeLang(firstQueryValue(req.query.lang) || "en");
-    const briefs = (await searchAllCards(lang, { name: q }, SEARCH_HYDRATE_LIMIT)).slice(
-      0,
-      SEARCH_HYDRATE_LIMIT,
+
+    if (isCardId(q)) {
+      const card = await getCardOrNull(q, lang);
+      res.json(card ? [card] : []);
+      return;
+    }
+
+    const collector = q.match(/^#?(\d{1,3})\s*\/\s*(\d{2,4})$/);
+    const briefs = await searchAllCards(
+      lang,
+      collector
+        ? { localId: String(Number(collector[1])), sortOrder: "DESC" }
+        : { name: q, sortOrder: "DESC" },
+      SEARCH_LIMIT,
     );
-    const cards = await hydrateCards(briefs, lang, SEARCH_HYDRATE_LIMIT);
+    const cards = await cardsFromBriefs(lang, briefs, collector ? undefined : q);
     res.json(cards);
   } catch (error) {
     logError("Zoeken mislukt:", error);

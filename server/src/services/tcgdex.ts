@@ -162,7 +162,7 @@ export async function searchCards(
 export async function searchAllCards(
   lang: TcgLang,
   filters: Omit<CardSearchFilters, "page" | "itemsPerPage">,
-  max = 300,
+  max = 400,
 ): Promise<TcgdexCardBrief[]> {
   const path =
     `${BASE}/${lang}/cards` +
@@ -172,6 +172,8 @@ export async function searchAllCards(
       evolveFrom: filters.evolveFrom,
       hp: filters.hp,
       illustrator: filters.illustrator,
+      "sort:field": "releaseDate",
+      "sort:order": filters.sortOrder ?? "DESC",
     });
 
   const result = await tcgFetch<TcgdexCardBrief[] | TcgdexCardBrief>(path);
@@ -193,9 +195,54 @@ function sameCount(left: string | number | null | undefined, right: string | num
 type SetBrief = {
   id: string;
   name: string;
+  logo?: string;
   symbol?: string;
   cardCount?: { official?: number; total?: number };
 };
+
+export function setIdFromCardId(cardId: string) {
+  const at = cardId.lastIndexOf("-");
+  return at > 0 ? cardId.slice(0, at) : cardId;
+}
+
+function rankSearchHits(cards: TcgdexCard[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return cards;
+  const score = (name: string) => {
+    const value = name.toLowerCase();
+    if (value === needle) return 0;
+    if (value.startsWith(needle)) return 1;
+    if (value.includes(needle)) return 2;
+    return 3;
+  };
+  return [...cards].sort((left, right) => score(left.name) - score(right.name));
+}
+
+export async function cardsFromBriefs(
+  lang: TcgLang,
+  briefs: TcgdexCardBrief[],
+  query?: string,
+): Promise<TcgdexCard[]> {
+  const sets = await listSets(lang);
+  const byId = new Map(sets.map((set) => [set.id, set]));
+  const cards = uniqueBriefs(briefs).map((brief) => {
+    const setId = setIdFromCardId(brief.id);
+    const set = byId.get(setId);
+    return {
+      ...brief,
+      set: set
+        ? {
+            id: set.id,
+            name: set.name,
+            logo: set.logo,
+            symbol: set.symbol,
+            cardCount: set.cardCount,
+          }
+        : { id: setId, name: setId },
+    } satisfies TcgdexCard;
+  });
+  return query ? rankSearchHits(cards, query) : cards;
+}
 
 let setsCache: { lang: TcgLang; at: number; sets: SetBrief[] } | null = null;
 
