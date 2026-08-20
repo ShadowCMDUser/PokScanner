@@ -44,12 +44,6 @@ const CAMERA_COPY: Record<CameraIssue, { title: string; body: string; action: st
 
 type CropRect = { sx: number; sy: number; sw: number; sh: number };
 
-type ImageCaptureInstance = {
-  takePhoto: () => Promise<Blob>;
-};
-
-type ImageCaptureCtor = new (track: MediaStreamTrack) => ImageCaptureInstance;
-
 function toBlob(canvas: HTMLCanvasElement) {
   return new Promise<Blob | null>((resolve) => {
     canvas.toBlob((value) => resolve(value), "image/jpeg", 0.95);
@@ -98,37 +92,6 @@ function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement, pad = 0.04
   return { sx, sy, sw, sh };
 }
 
-function mapPreviewRectToPhoto(
-  videoWidth: number,
-  videoHeight: number,
-  photoWidth: number,
-  photoHeight: number,
-  rect: CropRect,
-): CropRect {
-  const videoAR = videoWidth / Math.max(videoHeight, 1);
-  const photoAR = photoWidth / Math.max(photoHeight, 1);
-  let usedW = photoWidth;
-  let usedH = photoHeight;
-  let offX = 0;
-  let offY = 0;
-  if (photoAR > videoAR) {
-    usedH = photoHeight;
-    usedW = photoHeight * videoAR;
-    offX = (photoWidth - usedW) / 2;
-  } else {
-    usedW = photoWidth;
-    usedH = photoWidth / videoAR;
-    offY = (photoHeight - usedH) / 2;
-  }
-  const scale = usedW / Math.max(videoWidth, 1);
-  return {
-    sx: offX + rect.sx * scale,
-    sy: offY + rect.sy * scale,
-    sw: rect.sw * scale,
-    sh: rect.sh * scale,
-  };
-}
-
 function drawCrop(
   canvas: HTMLCanvasElement,
   source: CanvasImageSource,
@@ -157,18 +120,6 @@ function drawCrop(
   return true;
 }
 
-function imageCaptureFor(track: MediaStreamTrack | undefined): ImageCaptureInstance | null {
-  if (!track || track.readyState !== "live") return null;
-  if (!("ImageCapture" in window)) return null;
-  const Ctor = (window as Window & { ImageCapture?: ImageCaptureCtor }).ImageCapture;
-  if (!Ctor) return null;
-  try {
-    return new Ctor(track);
-  } catch {
-    return null;
-  }
-}
-
 function videoFrameReady(video: HTMLVideoElement) {
   return (
     video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
@@ -190,37 +141,7 @@ async function captureCard(
   canvas: HTMLCanvasElement,
 ) {
   const target = stamp ?? guide;
-  const preview = coverSourceRect(video, target, stamp ? 0.1 : 0.02);
-  const stream = video.srcObject;
-  const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : undefined;
-  const still = imageCaptureFor(track);
-
-  if (still) {
-    try {
-      const blob = await still.takePhoto();
-      const bitmap = await createImageBitmap(blob);
-      try {
-        if (bitmap.width >= 8 && bitmap.height >= 8) {
-          const mapped = mapPreviewRectToPhoto(
-            video.videoWidth,
-            video.videoHeight,
-            bitmap.width,
-            bitmap.height,
-            preview,
-          );
-          if (drawCrop(canvas, bitmap, bitmap.width, bitmap.height, mapped)) {
-            const photo = await toBlob(canvas);
-            if (photo && photo.size > 4000) return photo;
-          }
-        }
-      } finally {
-        bitmap.close();
-      }
-    } catch {
-      // iOS and some browsers have no still-photo capture.
-    }
-  }
-
+  const preview = coverSourceRect(video, target, stamp ? 0.05 : 0.02);
   return captureFromVideo(video, canvas, preview);
 }
 

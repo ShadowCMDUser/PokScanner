@@ -23,7 +23,6 @@ function scaleGray(input: Sharp, height: number) {
   return input.resize({ height, withoutEnlargement: false, kernel: "lanczos3" }).greyscale().normalize();
 }
 
-/** Morphological close on white glyphs: dilate then erode, all in libvips. */
 async function fillOutlined(gray: Sharp) {
   const boosted = gray.linear(1.45, -18);
   const { channels } = await boosted.clone().stats();
@@ -42,18 +41,18 @@ async function fillOutlined(gray: Sharp) {
 }
 
 async function variantsFor(crop: Buffer): Promise<Buffer[]> {
-  const prepared = scaleGray(sharp(crop), 300);
+  const prepared = scaleGray(sharp(crop), 360);
   const { channels } = await prepared.clone().stats();
   const dark = (channels[0]?.mean ?? 128) < 80;
 
   const [ink, contrast, inv, filled, digits] = await Promise.all([
     prepared.clone().negate().sharpen({ sigma: 1.3 }).png().toBuffer(),
     prepared.clone().linear(1.3, -14).sharpen({ sigma: 1.1 }).png().toBuffer(),
-    prepared.clone().resize({ height: 280, withoutEnlargement: false }).negate().threshold(148).png().toBuffer(),
-    fillOutlined(prepared.clone().resize({ height: 280, withoutEnlargement: false })),
+    prepared.clone().resize({ height: 320, withoutEnlargement: false }).negate().threshold(148).png().toBuffer(),
+    fillOutlined(prepared.clone().resize({ height: 320, withoutEnlargement: false })),
     prepared
       .clone()
-      .resize({ height: 260, withoutEnlargement: false })
+      .resize({ height: 300, withoutEnlargement: false })
       .negate()
       .blur(0.9)
       .threshold(150)
@@ -62,15 +61,6 @@ async function variantsFor(crop: Buffer): Promise<Buffer[]> {
   ]);
 
   return dark ? [filled, ink, contrast, inv, digits] : [ink, contrast, inv, filled, digits];
-}
-
-async function cardCrops(source: Sharp, width: number, height: number) {
-  const boxes = [
-    extractBox(width, height, 0.0, 0.80, 0.68, 1.0),
-    extractBox(width, height, 0.0, 0.86, 0.62, 1.0),
-    extractBox(width, height, 0.0, 0.90, 0.42, 0.995),
-  ];
-  return Promise.all(boxes.map((box) => source.clone().extract(box).jpeg({ quality: 95 }).toBuffer()));
 }
 
 export async function extractIllustration(input: Buffer) {
@@ -93,26 +83,15 @@ export async function prepareStamp(input: Buffer): Promise<Buffer[]> {
     const { width, height } = await rotated.clone().metadata();
     if (!width || !height) return variantsFor(input);
 
-    const stampStrip = width >= height;
-    const crops = stampStrip
-      ? [await rotated.clone().jpeg({ quality: 95 }).toBuffer()]
-      : await cardCrops(rotated, width, height);
+    const stamp = width >= height
+      ? await rotated.clone().jpeg({ quality: 95 }).toBuffer()
+      : await rotated
+          .clone()
+          .extract(extractBox(width, height, 0.0, 0.84, 0.64, 1.0))
+          .jpeg({ quality: 95 })
+          .toBuffer();
 
-    const [primary, ...extra] = crops;
-    const passes = await variantsFor(primary);
-    if (!extra.length) return passes;
-
-    const extras = await Promise.all(
-      extra.map(async (crop) => {
-        const gray = scaleGray(sharp(crop), 280);
-        const [ink, contrast] = await Promise.all([
-          gray.clone().negate().sharpen({ sigma: 1.3 }).png().toBuffer(),
-          gray.clone().linear(1.35, -16).png().toBuffer(),
-        ]);
-        return [ink, contrast];
-      }),
-    );
-    return [...passes, ...extras.flat()].slice(0, 7);
+    return variantsFor(stamp);
   } catch {
     return [];
   }

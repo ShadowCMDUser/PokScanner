@@ -166,25 +166,27 @@ function extractCollector(text: string) {
   }
 
   for (const match of cleaned.matchAll(/(\d{1,3}|[OQDIL]{1,3})\s*[\/\\:\-]\s*(\d{2,3})\b/g)) {
-    add(match[1], match[2], 4);
-  }
-  for (const match of cleaned.matchAll(/(\d{2,3})7+\s+(\d{2,3})\b/g)) {
-    add(match[1], match[2], 6);
-  }
-  for (const match of cleaned.matchAll(/(\d{1,3})\s+[I1|]\s+(\d{2,3})\b/g)) {
-    add(match[1], match[2], 2);
+    add(match[1], match[2], 10);
   }
   for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{1,3})[\/\\:\-](\d{2,3})/g)) {
-    add(match[1], match[2], 3);
+    add(match[1], match[2], 8);
   }
-  for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{2,3})7(\d{2,3})/g)) {
-    add(match[1], match[2], 5);
-  }
-  for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{3})(\d{3})$/g)) {
-    add(match[1], match[2], 3);
-  }
-  for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{2})(\d{3})$/g)) {
-    add(match[1], match[2], 1);
+  if (!pairs.length) {
+    for (const match of cleaned.matchAll(/(\d{2,3})7+\s+(\d{2,3})\b/g)) {
+      add(match[1], match[2], 6);
+    }
+    for (const match of cleaned.matchAll(/(\d{1,3})\s+[I1|]\s+(\d{2,3})\b/g)) {
+      add(match[1], match[2], 2);
+    }
+    for (const match of cleaned.replace(/\s+/g, "").matchAll(/(\d{2,3})7(\d{2,3})/g)) {
+      add(match[1], match[2], 5);
+    }
+    for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{3})(\d{3})$/g)) {
+      add(match[1], match[2], 3);
+    }
+    for (const match of cleaned.replace(/[^0-9]/g, "").matchAll(/^(\d{2})(\d{3})$/g)) {
+      add(match[1], match[2], 1);
+    }
   }
 
   pairs.sort((a, b) => b.score - a.score || Number(b.total) - Number(a.total));
