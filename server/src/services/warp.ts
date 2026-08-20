@@ -386,7 +386,8 @@ export async function flattenCard(input: Buffer) {
   if (!width || !height) return source;
 
   const ratio = width / Math.max(height, 1);
-  if (ratio > 0.58 && ratio < 0.88) return source;
+  // Overlay crop (~63/88) or a wide stamp strip — warping those cuts off the number block.
+  if ((ratio > 0.58 && ratio < 0.88) || ratio >= 1.5) return source;
 
   const probeW = 480;
   const probeH = Math.max(180, Math.round((probeW * height) / width));

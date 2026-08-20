@@ -1,3 +1,4 @@
+import { logError, publicError } from "../publicError.js";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { prepareStamp } from "../services/image.js";
@@ -17,6 +18,13 @@ const upload = multer({
 });
 
 export const scanRouter = Router();
+
+const SCAN_COOLDOWN_MS = 1_500;
+const lastScanAt = new Map<string, number>();
+
+function scanClientId(req: ScanRequest) {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
 
 interface ScanBody {
   image?: string;
@@ -48,6 +56,20 @@ scanRouter.post("/", upload.single("image"), async (req: ScanRequest, res) => {
       return;
     }
 
+    const clientId = scanClientId(req);
+    const previous = lastScanAt.get(clientId) ?? 0;
+    if (Date.now() - previous < SCAN_COOLDOWN_MS) {
+      res.status(429).json({ error: "Even wachten voor de volgende scan" });
+      return;
+    }
+    lastScanAt.set(clientId, Date.now());
+    if (lastScanAt.size > 2_000) {
+      const cutoff = Date.now() - 60_000;
+      for (const [key, at] of lastScanAt) {
+        if (at < cutoff) lastScanAt.delete(key);
+      }
+    }
+
     const lang = normalizeLang(typeof body.lang === "string" ? body.lang : undefined);
     let image = fileBuffer;
     try {
@@ -77,7 +99,7 @@ scanRouter.post("/", upload.single("image"), async (req: ScanRequest, res) => {
       bestMatch: matches[0] ?? null,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Scan mislukt";
-    res.status(500).json({ error: message, matches: [], bestMatch: null });
+    logError("Scan mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Scan mislukt"), matches: [], bestMatch: null });
   }
 });

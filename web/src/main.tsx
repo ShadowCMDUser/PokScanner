@@ -20,7 +20,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Bound
     if (!this.state.error) return this.props.children;
     return (
       <main className="login-screen">
-        <div className="error">{this.state.error.message || "Er ging iets mis"}</div>
+        <div className="error">Er ging iets mis. Probeer de pagina opnieuw te laden.</div>
         <button className="btn primary" type="button" onClick={() => window.location.reload()}>
           Opnieuw laden
         </button>

@@ -383,22 +383,28 @@ export async function readStamp(images: Buffer[]): Promise<StampId> {
   try {
     worker = await createOcrWorker();
 
-    for (const image of images) {
-      const result = await recognize(worker, image, PSM.SPARSE_TEXT, STAMP_CHARS);
-      if (result.killed) {
-        worker = await createOcrWorker();
+    for (const [index, image] of images.entries()) {
+      const passes = index < 2
+        ? ([PSM.SPARSE_TEXT, PSM.SINGLE_LINE, PSM.SINGLE_BLOCK] as const)
+        : ([PSM.SPARSE_TEXT] as const);
+      for (const psm of passes) {
+        const result = await recognize(worker, image, psm, STAMP_CHARS);
+        if (result.killed) {
+          worker = await createOcrWorker();
+        }
+        const parsed = extractStampId(result.text);
+        const candidate: StampId = {
+          ...parsed,
+          rawText: result.text,
+          confidence: result.confidence,
+        };
+        if (candidate.setCode && candidate.collectorNumber) complete.push(candidate);
+        mergeCompatible(merged, parsed);
+        if (result.text.trim()) merged.rawText = [merged.rawText, result.text].filter(Boolean).join("\n");
+        merged.confidence = Math.max(merged.confidence, result.confidence);
+        if (candidate.setCode && candidate.collectorNumber && candidate.setTotal) break;
       }
-      const parsed = extractStampId(result.text);
-      const candidate: StampId = {
-        ...parsed,
-        rawText: result.text,
-        confidence: result.confidence,
-      };
-      if (candidate.setCode && candidate.collectorNumber) complete.push(candidate);
-      mergeCompatible(merged, parsed);
-      if (result.text.trim()) merged.rawText = [merged.rawText, result.text].filter(Boolean).join("\n");
-      merged.confidence = Math.max(merged.confidence, result.confidence);
-      if (candidate.setCode && candidate.collectorNumber && candidate.setTotal) break;
+      if (merged.setCode && merged.collectorNumber && merged.setTotal) break;
     }
   } catch {
     return complete.length

@@ -1,3 +1,4 @@
+import { logError, publicError } from "../publicError.js";
 import { Router } from "express";
 import {
   getCard,
@@ -32,8 +33,8 @@ searchRouter.get("/", async (req, res) => {
     const cards = await hydrateCards(briefs, lang, SEARCH_HYDRATE_LIMIT);
     res.json(cards);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Zoeken mislukt";
-    res.status(500).json({ error: message });
+    logError("Zoeken mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Zoeken mislukt") });
   }
 });
 
@@ -43,7 +44,7 @@ searchRouter.get("/:id", async (req, res) => {
     const card = await getCard(req.params.id, lang);
     res.json(card);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Kaart niet gevonden";
-    res.status(404).json({ error: message });
+    logError("Kaart ophalen mislukt:", error);
+    res.status(404).json({ error: publicError(error, "Kaart niet gevonden") });
   }
 });

@@ -183,8 +183,14 @@ async function captureFromVideo(video: HTMLVideoElement, canvas: HTMLCanvasEleme
   return toBlob(canvas);
 }
 
-async function captureCard(video: HTMLVideoElement, guide: HTMLElement, canvas: HTMLCanvasElement) {
-  const preview = coverSourceRect(video, guide, 0.04);
+async function captureCard(
+  video: HTMLVideoElement,
+  guide: HTMLElement,
+  stamp: HTMLElement | null,
+  canvas: HTMLCanvasElement,
+) {
+  const target = stamp ?? guide;
+  const preview = coverSourceRect(video, target, stamp ? 0.1 : 0.02);
   const stream = video.srcObject;
   const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : undefined;
   const still = imageCaptureFor(track);
@@ -204,7 +210,7 @@ async function captureCard(video: HTMLVideoElement, guide: HTMLElement, canvas: 
           );
           if (drawCrop(canvas, bitmap, bitmap.width, bitmap.height, mapped)) {
             const photo = await toBlob(canvas);
-            if (photo && photo.size > 12000) return photo;
+            if (photo && photo.size > 4000) return photo;
           }
         }
       } finally {
@@ -351,7 +357,7 @@ export function Scanner({ lang, onAdd }: Props) {
     setScanning(true);
     setHint("Nummer lezen...");
 
-    void captureCard(video, guide, canvas)
+    void captureCard(video, guide, stampRef.current, canvas)
       .then(async (blob) => {
         resetCanvas(canvas);
         if (!aliveRef.current || abort.signal.aborted) return;
@@ -379,14 +385,19 @@ export function Scanner({ lang, onAdd }: Props) {
       });
   }, [resetScan, result, scanning, streamReady]);
 
+  const captureRef = useRef(capture);
+  captureRef.current = capture;
+  const runCapture = useCallback(() => captureRef.current(), []);
+
   useEffect(() => {
     register({
-      capture,
+      capture: runCapture,
       scanning,
-      busy: scanning || Boolean(result) || !streamReady,
+      busy: scanning || !streamReady,
     });
-    return () => register(null);
-  }, [capture, register, result, scanning, streamReady]);
+  }, [register, runCapture, scanning, streamReady]);
+
+  useEffect(() => () => register(null), [register]);
 
   const selected =
     result?.matches.find((match) => match.card.id === selectedId)?.card ??

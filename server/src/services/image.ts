@@ -66,9 +66,9 @@ async function variantsFor(crop: Buffer): Promise<Buffer[]> {
 
 async function cardCrops(source: Sharp, width: number, height: number) {
   const boxes = [
-    extractBox(width, height, 0.0, 0.86, 0.66, 1.0),
-    extractBox(width, height, 0.0, 0.92, 0.58, 1.0),
-    extractBox(width, height, 0.0, 0.88, 0.4, 0.99),
+    extractBox(width, height, 0.0, 0.80, 0.68, 1.0),
+    extractBox(width, height, 0.0, 0.86, 0.62, 1.0),
+    extractBox(width, height, 0.0, 0.90, 0.42, 0.995),
   ];
   return Promise.all(boxes.map((box) => source.clone().extract(box).jpeg({ quality: 95 }).toBuffer()));
 }

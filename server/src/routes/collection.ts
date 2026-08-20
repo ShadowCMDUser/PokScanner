@@ -1,3 +1,4 @@
+import { logError, publicError } from "../publicError.js";
 import { Router } from "express";
 import {
   addToCollection,
@@ -42,8 +43,8 @@ collectionRouter.get("/", async (_req, res) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Collectie laden mislukt";
-    res.status(500).json({ error: message });
+    logError("Collectie laden mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Collectie laden mislukt") });
   }
 });
 
@@ -80,8 +81,8 @@ collectionRouter.post("/", async (req, res) => {
     const entry = await addToCollection(getUserId(res), card, { condition, quantity });
     res.status(201).json(entry);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Toevoegen mislukt";
-    res.status(500).json({ error: message });
+    logError("Toevoegen mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Toevoegen mislukt") });
   }
 });
 
@@ -123,8 +124,8 @@ collectionRouter.patch("/:id", async (req, res) => {
     }
     res.json(entry);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Bijwerken mislukt";
-    res.status(500).json({ error: message });
+    logError("Bijwerken mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Bijwerken mislukt") });
   }
 });
 
@@ -143,7 +144,7 @@ collectionRouter.delete("/:id", async (req, res) => {
     }
     res.status(204).end();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Verwijderen mislukt";
-    res.status(500).json({ error: message });
+    logError("Verwijderen mislukt:", error);
+    res.status(500).json({ error: publicError(error, "Verwijderen mislukt") });
   }
 });

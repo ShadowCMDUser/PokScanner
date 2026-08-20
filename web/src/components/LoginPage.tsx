@@ -9,7 +9,11 @@ type Props = HTMLAttributes<HTMLElement> & {
 
 export function LoginPage({ onDone, className, ...rest }: Props) {
   useEffect(() => {
+    const previous = document.title;
     document.title = "Inloggen | PokScanner";
+    return () => {
+      document.title = previous;
+    };
   }, []);
 
   return (

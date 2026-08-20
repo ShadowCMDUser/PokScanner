@@ -51,9 +51,13 @@ export default function App() {
   }, []);
 
   async function handleAdd(card: TcgdexCard, condition: CardCondition) {
-    await addCard(card.id, lang, condition);
-    setNotice(`${card.name} toegevoegd`);
-    setTimeout(() => setNotice(null), 2200);
+    try {
+      await addCard(card.id, lang, condition);
+      setNotice(`${card.name} toegevoegd`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Toevoegen mislukt");
+    }
+    window.setTimeout(() => setNotice(null), 2200);
   }
 
   if (session.isPending) {
@@ -165,19 +169,24 @@ function AppShell({
 
 function ScanTabButton({ page, goTo }: { page: Page; goTo: (page: Page) => void }) {
   const { handle } = useScanAction();
+  const scanning = Boolean(handle?.scanning);
+  const blocked = !handle || handle.busy;
+
   return (
     <button
       className={`tab-scan${page === "scan" ? " active" : ""}`}
+      disabled={page === "scan" && blocked}
       onClick={() => {
         if (page !== "scan") {
           goTo("scan");
           return;
         }
-        handle?.capture();
+        if (!handle || handle.busy) return;
+        handle.capture();
       }}
       aria-label="Scan"
     >
-      <PokeballIcon spin={Boolean(handle?.scanning)} />
+      <PokeballIcon spin={scanning} />
     </button>
   );
 }
