@@ -93,8 +93,7 @@ export async function prepareStamp(input: Buffer): Promise<Buffer[]> {
     const { width, height } = await rotated.clone().metadata();
     if (!width || !height) return variantsFor(input);
 
-    const ratio = width / height;
-    const stampStrip = ratio >= 1.8 && height <= 520;
+    const stampStrip = width >= height;
     const crops = stampStrip
       ? [await rotated.clone().jpeg({ quality: 95 }).toBuffer()]
       : await cardCrops(rotated, width, height);

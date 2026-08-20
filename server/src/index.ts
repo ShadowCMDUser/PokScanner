@@ -9,7 +9,6 @@ import { logError, publicError } from "./publicError.js";
 import { collectionRouter } from "./routes/collection.js";
 import { scanRouter } from "./routes/scan.js";
 import { searchRouter } from "./routes/search.js";
-import { wakeupScanner } from "./services/clipScan.js";
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
@@ -102,7 +101,6 @@ if (isProd && !process.env.BETTER_AUTH_SECRET?.trim()) {
 
 const server = app.listen(port, host, () => {
   console.log(`PokScanner luistert op http://${host}:${port}`);
-  void wakeupScanner();
 });
 
 function shutdown(signal: string) {

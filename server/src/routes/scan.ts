@@ -5,7 +5,6 @@ import { prepareStamp } from "../services/image.js";
 import { lookupStamp } from "../services/lookup.js";
 import { readStamp } from "../services/ocr.js";
 import { normalizeLang } from "../services/tcgdex.js";
-import { flattenCard } from "../services/warp.js";
 
 // memoryStorage keeps the whole upload in RAM. 15MB × concurrent scans can exhaust the process;
 // move to disk/object storage if this route gets heavy traffic.
@@ -71,14 +70,7 @@ scanRouter.post("/", upload.single("image"), async (req: ScanRequest, res) => {
     }
 
     const lang = normalizeLang(typeof body.lang === "string" ? body.lang : undefined);
-    let image = fileBuffer;
-    try {
-      image = await flattenCard(fileBuffer);
-    } catch (error) {
-      console.warn("flattenCard failed, using original upload", error);
-      image = fileBuffer;
-    }
-    const regions = await prepareStamp(image);
+    const regions = await prepareStamp(fileBuffer);
     const stamp = await readStamp(regions);
     const cards = await lookupStamp(stamp, lang);
     const matches = cards.slice(0, 8).map((card, index) => ({
