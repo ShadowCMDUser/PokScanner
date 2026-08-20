@@ -736,6 +736,8 @@ img {
 .search-tile img {
   object-fit: contain;
 }
+
+.search-tile .tile-fallback {
   width: 100%;
   aspect-ratio: 63 / 88;
   display: grid;
