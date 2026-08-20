@@ -23,16 +23,18 @@ export async function lookupStamp(stamp: StampId, lang: TcgLang): Promise<Tcgdex
     const exact = await cardsBySetStamp(lang, stamp.setCode, stamp.collectorNumber, stamp.setTotal);
     const aligned = exact.filter((card) => totalsAlign(card, stamp.setTotal));
     if (aligned.length) return aligned;
+    if (stamp.setTotal) return [];
   }
 
   const number = Number(stamp.collectorNumber);
   const total = Number(stamp.setTotal);
+  const secretRare = number > total && total >= 50;
   const uniquePair =
     Number.isFinite(number) &&
     Number.isFinite(total) &&
     String(number).length >= 2 &&
     String(total).length >= 2 &&
-    total >= 30 &&
+    (secretRare || (total >= 70 && number <= total)) &&
     number >= 1 &&
     number <= total + 80;
 

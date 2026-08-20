@@ -24,103 +24,18 @@ function toBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-type CropRect = { sx: number; sy: number; sw: number; sh: number };
-
 type ImageCaptureLike = {
   takePhoto: () => Promise<Blob>;
 };
 
-function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement, pad = 0.03): CropRect {
-  const v = video.getBoundingClientRect();
-  const g = guide.getBoundingClientRect();
-  const videoRatio = video.videoWidth / video.videoHeight;
-  const elemRatio = v.width / Math.max(v.height, 1);
-  let renderW = v.width;
-  let renderH = v.height;
-  let offsetX = 0;
-  let offsetY = 0;
-  if (videoRatio > elemRatio) {
-    renderH = v.height;
-    renderW = renderH * videoRatio;
-    offsetX = (v.width - renderW) / 2;
-  } else {
-    renderW = v.width;
-    renderH = renderW / videoRatio;
-    offsetY = (v.height - renderH) / 2;
-  }
-  const scaleX = video.videoWidth / renderW;
-  const scaleY = video.videoHeight / renderH;
-  let sx = (g.left - v.left - offsetX) * scaleX;
-  let sy = (g.top - v.top - offsetY) * scaleY;
-  let sw = g.width * scaleX;
-  let sh = g.height * scaleY;
-  sx -= sw * pad;
-  sy -= sh * pad;
-  sw += sw * pad * 2;
-  sh += sh * pad * 2;
-  sx = Math.max(0, Math.min(sx, video.videoWidth - 8));
-  sy = Math.max(0, Math.min(sy, video.videoHeight - 8));
-  sw = Math.max(8, Math.min(sw, video.videoWidth - sx));
-  sh = Math.max(8, Math.min(sh, video.videoHeight - sy));
-  return { sx, sy, sw, sh };
+function fitCanvas(canvas: HTMLCanvasElement, width: number, height: number, maxSide = 1800) {
+  const scale = Math.min(1, maxSide / Math.max(width, height, 1));
+  canvas.width = Math.max(8, Math.round(width * scale));
+  canvas.height = Math.max(8, Math.round(height * scale));
+  return canvas.getContext("2d");
 }
 
-function mapPreviewRectToPhoto(
-  videoWidth: number,
-  videoHeight: number,
-  photoWidth: number,
-  photoHeight: number,
-  rect: CropRect,
-): CropRect {
-  const videoAR = videoWidth / Math.max(videoHeight, 1);
-  const photoAR = photoWidth / Math.max(photoHeight, 1);
-  let usedW = photoWidth;
-  let usedH = photoHeight;
-  let offX = 0;
-  let offY = 0;
-  if (photoAR > videoAR) {
-    usedH = photoHeight;
-    usedW = photoHeight * videoAR;
-    offX = (photoWidth - usedW) / 2;
-  } else {
-    usedW = photoWidth;
-    usedH = photoWidth / videoAR;
-    offY = (photoHeight - usedH) / 2;
-  }
-  const scale = usedW / Math.max(videoWidth, 1);
-  return {
-    sx: offX + rect.sx * scale,
-    sy: offY + rect.sy * scale,
-    sw: rect.sw * scale,
-    sh: rect.sh * scale,
-  };
-}
-
-function drawCrop(
-  canvas: HTMLCanvasElement,
-  source: CanvasImageSource,
-  sourceWidth: number,
-  sourceHeight: number,
-  rect: CropRect,
-  maxWidth = 2000,
-) {
-  const sx = Math.max(0, Math.min(rect.sx, sourceWidth - 8));
-  const sy = Math.max(0, Math.min(rect.sy, sourceHeight - 8));
-  const sw = Math.max(8, Math.min(rect.sw, sourceWidth - sx));
-  const sh = Math.max(8, Math.min(rect.sh, sourceHeight - sy));
-  const scale = sw > maxWidth ? maxWidth / sw : 1;
-  canvas.width = Math.round(sw * scale);
-  canvas.height = Math.round(sh * scale);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return false;
-  ctx.imageSmoothingEnabled = scale !== 1;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return true;
-}
-
-async function captureCard(video: HTMLVideoElement, guide: HTMLElement, canvas: HTMLCanvasElement) {
-  const preview = coverSourceRect(video, guide, 0.02);
+async function captureScene(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
   const stream = video.srcObject;
   if (stream instanceof MediaStream) {
     const track = stream.getVideoTracks()[0];
@@ -130,25 +45,27 @@ async function captureCard(video: HTMLVideoElement, guide: HTMLElement, canvas: 
       try {
         const blob = await new ImageCaptureCtor(track).takePhoto();
         const bitmap = await createImageBitmap(blob);
-        const mapped = mapPreviewRectToPhoto(
-          video.videoWidth,
-          video.videoHeight,
-          bitmap.width,
-          bitmap.height,
-          preview,
-        );
-        const ok = drawCrop(canvas, bitmap, bitmap.width, bitmap.height, mapped);
-        bitmap.close();
-        if (ok) {
+        const ctx = fitCanvas(canvas, bitmap.width, bitmap.height);
+        if (ctx) {
+          ctx.imageSmoothingEnabled = canvas.width !== bitmap.width;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+          bitmap.close();
           const photo = await toBlob(canvas);
-          if (photo && photo.size > 12000) return photo;
+          if (photo && photo.size > 20000) return photo;
+        } else {
+          bitmap.close();
         }
       } catch {
         // iOS and some browsers have no still-photo capture.
       }
     }
   }
-  if (!drawCrop(canvas, video, video.videoWidth, video.videoHeight, preview)) return null;
+  const ctx = fitCanvas(canvas, video.videoWidth, video.videoHeight);
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = canvas.width !== video.videoWidth;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   return toBlob(canvas);
 }
 
@@ -161,7 +78,7 @@ export function Scanner({ lang, onAdd }: Props) {
   const { register } = useScanAction();
 
   const [camTick, setCamTick] = useState(0);
-  const [hint, setHint] = useState<string | null>("Kaart in het kader, gele vak linksonder");
+  const [hint, setHint] = useState<string | null>("Richt de camera op de kaart");
   const [scanning, setScanning] = useState(false);
   const [needsCamera, setNeedsCamera] = useState(false);
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -215,14 +132,13 @@ export function Scanner({ lang, onAdd }: Props) {
 
   const capture = useCallback(() => {
     const video = videoRef.current;
-    const guide = guideRef.current;
-    if (!video || scanning || video.readyState < 2 || !video.videoWidth || !guide) return;
+    if (!video || scanning || video.readyState < 2 || !video.videoWidth) return;
 
     if (result) {
       setResult(null);
       setSaved(false);
       setSelectedId(null);
-      setHint("Kaart in het kader, gele vak linksonder");
+      setHint("Richt de camera op de kaart");
       return;
     }
 
@@ -230,14 +146,15 @@ export function Scanner({ lang, onAdd }: Props) {
     const canvas = captureCanvas.current;
 
     setScanning(true);
-    setHint("Nummer lezen...");
+    setHint("Kaart zoeken...");
 
-    void captureCard(video, guide, canvas)
+    void captureScene(video, canvas)
       .then(async (blob) => {
         if (!blob) throw new Error("Kon geen foto maken");
+        setHint("Nummer lezen...");
         const scan = await scanCard(blob, langRef.current);
         if (!scan.matches.length || !scan.bestMatch) {
-          setHint("Geen match. Meer licht, kaart stiller, nummer in het gele vak.");
+          setHint("Geen match. Kaart stiller in beeld, met licht op het nummer.");
           return;
         }
         setResult(scan);
@@ -311,7 +228,7 @@ export function Scanner({ lang, onAdd }: Props) {
                 setResult(null);
                 setSaved(false);
                 setSelectedId(null);
-                setHint("Kaart in het kader, gele vak linksonder");
+                setHint("Richt de camera op de kaart");
               }}
             >
               Opnieuw

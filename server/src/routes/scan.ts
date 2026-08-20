@@ -3,6 +3,7 @@ import multer from "multer";
 import { prepareStamp } from "../services/image.js";
 import { lookupStamp } from "../services/lookup.js";
 import { readStamp } from "../services/ocr.js";
+import { flattenCard } from "../services/warp.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,7 +28,8 @@ scanRouter.post("/", upload.single("image"), async (req, res) => {
     }
 
     const lang = typeof req.body?.lang === "string" ? req.body.lang : "en";
-    const regions = await prepareStamp(fileBuffer);
+    const card = await flattenCard(fileBuffer);
+    const regions = await prepareStamp(card);
     const stamp = await readStamp(regions);
     const cards = await lookupStamp(stamp, lang);
     const matches = cards.slice(0, 8).map((card, index) => ({

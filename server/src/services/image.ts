@@ -107,10 +107,10 @@ export async function prepareStamp(input: Buffer): Promise<Buffer[]> {
   if (!width || !height) return variantsFor(input);
 
   const ratio = width / height;
-  const crops =
-    ratio >= 1.55
-      ? [await rotated.jpeg({ quality: 95 }).toBuffer()]
-      : await cardCrops(input, width, height);
+  const stampStrip = ratio >= 1.8 && height <= 520;
+  const crops = stampStrip
+    ? [await rotated.jpeg({ quality: 95 }).toBuffer()]
+    : await cardCrops(input, width, height);
 
   const [primary, ...extra] = crops;
   const passes = await variantsFor(primary);

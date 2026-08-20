@@ -1,11 +1,21 @@
 import sharp from "sharp";
+import cvModule from "@techstark/opencv-js";
 
-const CARD_W = 660;
-const CARD_H = 880;
+const CARD_W = 750;
+const CARD_H = 1050;
+const CARD_RATIO = 63 / 88;
+
 type Point = { x: number; y: number };
+type OpenCv = Awaited<typeof cvModule>;
+
+let cvPromise: Promise<OpenCv> | null = null;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function dist(a: Point, b: Point) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function convexHull(points: Point[]) {
@@ -66,6 +76,26 @@ function reorder(corners: Point[]) {
   return [top[0], top[1], bottom[0], bottom[1]];
 }
 
+function scoreQuad(corners: Point[], width: number, height: number) {
+  const [tl, tr, bl, br] = reorder(corners);
+  const top = dist(tl, tr);
+  const bottom = dist(bl, br);
+  const left = dist(tl, bl);
+  const right = dist(tr, br);
+  const short = Math.min(top, bottom, left, right);
+  const long = Math.max(top, bottom, left, right);
+  if (short < 16 || long < 24) return 0;
+  const ratio = short / long;
+  if (ratio < 0.48 || ratio > 0.9) return 0;
+  const area =
+    Math.abs(tl.x * tr.y + tr.x * br.y + br.x * bl.y + bl.x * tl.y) -
+    Math.abs(tl.y * tr.x + tr.y * br.x + br.y * bl.x + bl.y * tl.x);
+  const fill = Math.abs(area) / 2 / (width * height);
+  if (fill < 0.07 || fill > 0.94) return 0;
+  const parallel = 1 - Math.abs(top - bottom) / long - Math.abs(left - right) / long;
+  return parallel * 45 + fill * 25 + (1 - Math.abs(ratio - CARD_RATIO)) * 30;
+}
+
 function largestBlob(mask: Uint8Array, w: number, h: number) {
   const seen = new Uint8Array(w * h);
   let best: number[] = [];
@@ -109,8 +139,7 @@ function blobCorners(cells: number[], w: number) {
   for (const i of cells) {
     const x = i % w;
     const y = Math.floor(i / w);
-    const edge =
-      !set.has(i - 1) || !set.has(i + 1) || !set.has(i - w) || !set.has(i + w);
+    const edge = !set.has(i - 1) || !set.has(i + 1) || !set.has(i - w) || !set.has(i + w);
     if (edge) points.push({ x, y });
   }
   return points;
@@ -167,7 +196,93 @@ function sample(data: Buffer, w: number, h: number, x: number, y: number) {
   return out;
 }
 
-async function findQuad(gray: Buffer, w: number, h: number) {
+async function getCv() {
+  if (!cvPromise) {
+    cvPromise = Promise.resolve(cvModule).then((mod) => {
+      const cv = mod as OpenCv & { Mat?: unknown; onRuntimeInitialized?: () => void };
+      if (cv.Mat) return cv;
+      return new Promise<OpenCv>((resolve) => {
+        cv.onRuntimeInitialized = () => resolve(cv);
+      });
+    });
+  }
+  return cvPromise;
+}
+
+function readQuad(mat: { rows: number; data32S: Int32Array }): Point[] | null {
+  if (mat.rows !== 4) return null;
+  const pts: Point[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    pts.push({ x: mat.data32S[i * 2], y: mat.data32S[i * 2 + 1] });
+  }
+  return pts;
+}
+
+function collectQuads(cv: OpenCv, binary: InstanceType<OpenCv["Mat"]>, width: number, height: number) {
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  const found: { corners: Point[]; score: number }[] = [];
+  try {
+    cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    const ranked: { index: number; area: number }[] = [];
+    for (let i = 0; i < contours.size(); i += 1) {
+      ranked.push({ index: i, area: cv.contourArea(contours.get(i)) });
+    }
+    ranked.sort((a, b) => b.area - a.area);
+    for (const item of ranked.slice(0, 36)) {
+      const contour = contours.get(item.index);
+      const peri = cv.arcLength(contour, true);
+      const approx = new cv.Mat();
+      cv.approxPolyDP(contour, approx, 0.03 * peri, true);
+      const corners = readQuad(approx);
+      approx.delete();
+      if (!corners) continue;
+      const score = scoreQuad(corners, width, height);
+      if (score > 0) found.push({ corners: reorder(corners), score });
+    }
+  } finally {
+    contours.delete();
+    hierarchy.delete();
+  }
+  found.sort((a, b) => b.score - a.score);
+  return found[0]?.corners ?? null;
+}
+
+async function findQuadOpenCv(gray: Buffer, width: number, height: number) {
+  try {
+    const cv = await getCv();
+    const src = cv.matFromArray(height, width, cv.CV_8UC1, gray);
+    const blur = new cv.Mat();
+    const edges = new cv.Mat();
+    const bin = new cv.Mat();
+    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+    try {
+      cv.GaussianBlur(src, blur, new cv.Size(5, 5), 0);
+      for (const [low, high] of [
+        [40, 120],
+        [20, 70],
+        [70, 180],
+      ]) {
+        cv.Canny(blur, edges, low, high);
+        cv.dilate(edges, edges, kernel);
+        const quad = collectQuads(cv, edges, width, height);
+        if (quad) return quad;
+      }
+      cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+      return collectQuads(cv, bin, width, height);
+    } finally {
+      src.delete();
+      blur.delete();
+      edges.delete();
+      bin.delete();
+      kernel.delete();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function findQuadBlob(gray: Buffer, w: number, h: number) {
   const mag = new Float32Array(w * h);
   let maxMag = 0;
   for (let y = 1; y < h - 1; y += 1) {
@@ -201,7 +316,9 @@ async function findQuad(gray: Buffer, w: number, h: number) {
   const blob = largestBlob(mask, w, h);
   if (blob.length < w * h * 0.08) return null;
   const hull = convexHull(blobCorners(blob, w));
-  return toQuad(hull);
+  const quad = toQuad(hull);
+  if (!quad || scoreQuad(quad, w, h) <= 0) return null;
+  return quad;
 }
 
 async function warpToSize(input: Buffer, corners: Point[]) {
@@ -233,11 +350,34 @@ async function warpToSize(input: Buffer, corners: Point[]) {
     .toBuffer();
 }
 
+async function centerCardCrop(input: Buffer, width: number, height: number) {
+  const ratio = width / height;
+  if (ratio > 0.62 && ratio < 0.82) return input;
+  const pad = 0.05;
+  const maxW = width * (1 - pad * 2);
+  const maxH = height * (1 - pad * 2);
+  let cropH = maxH;
+  let cropW = cropH * CARD_RATIO;
+  if (cropW > maxW) {
+    cropW = maxW;
+    cropH = cropW / CARD_RATIO;
+  }
+  return sharp(input)
+    .extract({
+      left: Math.round((width - cropW) / 2),
+      top: Math.round((height - cropH) / 2),
+      width: Math.max(8, Math.round(cropW)),
+      height: Math.max(8, Math.round(cropH)),
+    })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
+
 export async function flattenCard(input: Buffer) {
   const source = await sharp(input)
     .rotate()
-    .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 95 })
+    .resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 92 })
     .toBuffer();
 
   const meta = await sharp(source).metadata();
@@ -245,18 +385,17 @@ export async function flattenCard(input: Buffer) {
   const height = meta.height ?? 0;
   if (!width || !height) return source;
 
-  const probeW = 320;
-  const probeH = Math.max(160, Math.round((probeW * height) / width));
+  const probeW = 480;
+  const probeH = Math.max(180, Math.round((probeW * height) / width));
   const { data } = await sharp(source)
     .greyscale()
-    .blur(1.1)
+    .normalize()
+    .blur(0.8)
     .resize(probeW, probeH, { fit: "fill" })
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const quad = await findQuad(data, probeW, probeH);
-  let card: Buffer | null = null;
-
+  const quad = (await findQuadOpenCv(data, probeW, probeH)) ?? findQuadBlob(data, probeW, probeH);
   if (quad) {
     const mapped = quad.map((point) => ({
       x: (point.x / probeW) * width,
@@ -265,12 +404,12 @@ export async function flattenCard(input: Buffer) {
     const cx = mapped.reduce((sum, point) => sum + point.x, 0) / 4;
     const cy = mapped.reduce((sum, point) => sum + point.y, 0) / 4;
     const corners = mapped.map((point) => ({
-      x: clamp(point.x + (point.x - cx) * 0.05, 0, width - 1),
-      y: clamp(point.y + (point.y - cy) * 0.08, 0, height - 1),
+      x: clamp(point.x + (point.x - cx) * 0.04, 0, width - 1),
+      y: clamp(point.y + (point.y - cy) * 0.07, 0, height - 1),
     }));
-    card = await warpToSize(source, corners);
+    const card = await warpToSize(source, corners);
+    if (card) return card;
   }
 
-  if (!card) return source;
-  return card;
+  return centerCardCrop(source, width, height);
 }
