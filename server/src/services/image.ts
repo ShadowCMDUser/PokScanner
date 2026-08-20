@@ -1,7 +1,5 @@
 import sharp from "sharp";
 
-const CARD_RATIO = 63 / 88;
-
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -21,40 +19,77 @@ function extractBox(
   return { left, top, width: right - left, height: bottom - top };
 }
 
-async function stampOnly(input: Buffer) {
-  const resized = await sharp(input)
-    .rotate()
-    .resize({ width: 1400, height: 1400, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 95 })
-    .toBuffer();
-  const { width, height } = await sharp(resized).metadata();
-  if (!width || !height) return resized;
+function morph(src: Buffer, width: number, height: number, dilate: boolean, radius: number) {
+  const out = Buffer.alloc(src.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let value = dilate ? 0 : 255;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const pixel = src[ny * width + nx];
+          value = dilate ? Math.max(value, pixel) : Math.min(value, pixel);
+        }
+      }
+      out[y * width + x] = value;
+    }
+  }
+  return out;
+}
 
-  const ratio = width / Math.max(height, 1);
-  const looksLikeCard = Math.abs(Math.log(ratio / CARD_RATIO)) < 0.18;
-  if (!looksLikeCard && ratio > 1.8) return resized;
+async function fillOutlined(input: Buffer, height: number) {
+  const { data, info } = await sharp(input)
+    .resize({ height, withoutEnlargement: false, kernel: "lanczos3" })
+    .greyscale()
+    .normalize()
+    .linear(1.45, -18)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  return sharp(resized)
-    .extract(extractBox(width, height, 0.0, 0.90, 0.50, 1))
-    .jpeg({ quality: 95 })
+  let sum = 0;
+  for (const pixel of data) sum += pixel;
+  const mean = sum / Math.max(data.length, 1);
+  const darkBg = mean < 118;
+  const bin = Buffer.alloc(data.length);
+  for (let i = 0; i < data.length; i++) {
+    const isText = darkBg ? data[i] > mean + 10 : data[i] < mean - 10;
+    bin[i] = isText ? 255 : 0;
+  }
+
+  const closed = morph(morph(bin, info.width, info.height, true, 2), info.width, info.height, false, 1);
+  return sharp(closed, { raw: { width: info.width, height: info.height, channels: 1 } })
+    .png()
     .toBuffer();
 }
 
-function scale(input: Buffer, height: number) {
-  return sharp(input).resize({ height, withoutEnlargement: false });
+function scaleGray(input: Buffer, height: number) {
+  return sharp(input).resize({ height, withoutEnlargement: false, kernel: "lanczos3" }).greyscale().normalize();
 }
 
-export async function prepareStamp(input: Buffer) {
-  const stamp = await stampOnly(input);
-
-  const [contrast, inv, ink, digits] = await Promise.all([
-    scale(stamp, 260).greyscale().normalize().linear(1.25, -12).sharpen({ sigma: 1.4 }).png().toBuffer(),
-    scale(stamp, 260).greyscale().normalize().negate().threshold(150).png().toBuffer(),
-    scale(stamp, 260).greyscale().normalize().negate().sharpen({ sigma: 1.6 }).png().toBuffer(),
-    scale(stamp, 220).greyscale().normalize().negate().blur(1).threshold(146).png().toBuffer(),
+async function variantsFor(crop: Buffer): Promise<Buffer[]> {
+  const stats = await sharp(crop).greyscale().stats();
+  const dark = stats.channels[0].mean < 80;
+  const [ink, contrast, inv, filled, digits] = await Promise.all([
+    scaleGray(crop, 300).negate().sharpen({ sigma: 1.3 }).png().toBuffer(),
+    scaleGray(crop, 300).linear(1.3, -14).sharpen({ sigma: 1.1 }).png().toBuffer(),
+    scaleGray(crop, 280).negate().threshold(148).png().toBuffer(),
+    fillOutlined(crop, 280),
+    scaleGray(crop, 260).negate().blur(0.9).threshold(150).png().toBuffer(),
   ]);
+  return dark ? [filled, ink, contrast, inv, digits] : [ink, contrast, inv, filled, digits];
+}
 
-  return { contrast, ink, inv, digits };
+async function cardCrops(input: Buffer, width: number, height: number) {
+  const boxes = [
+    extractBox(width, height, 0.0, 0.86, 0.66, 1.0),
+    extractBox(width, height, 0.0, 0.92, 0.58, 1.0),
+    extractBox(width, height, 0.0, 0.88, 0.4, 0.99),
+  ];
+  return Promise.all(
+    boxes.map((box) => sharp(input).rotate().extract(box).jpeg({ quality: 95 }).toBuffer()),
+  );
 }
 
 export async function extractIllustration(input: Buffer) {
@@ -64,4 +99,31 @@ export async function extractIllustration(input: Buffer) {
     .extract(extractBox(width, height, 0.07, 0.17, 0.93, 0.61))
     .jpeg({ quality: 90 })
     .toBuffer();
+}
+
+export async function prepareStamp(input: Buffer): Promise<Buffer[]> {
+  const rotated = sharp(input).rotate();
+  const { width, height } = await rotated.metadata();
+  if (!width || !height) return variantsFor(input);
+
+  const ratio = width / height;
+  const crops =
+    ratio >= 1.55
+      ? [await rotated.jpeg({ quality: 95 }).toBuffer()]
+      : await cardCrops(input, width, height);
+
+  const [primary, ...extra] = crops;
+  const passes = await variantsFor(primary);
+  if (!extra.length) return passes;
+
+  const extras = await Promise.all(
+    extra.map(async (crop) => {
+      const [ink, contrast] = await Promise.all([
+        scaleGray(crop, 280).negate().sharpen({ sigma: 1.3 }).png().toBuffer(),
+        scaleGray(crop, 280).linear(1.35, -16).png().toBuffer(),
+      ]);
+      return [ink, contrast];
+    }),
+  );
+  return [...passes, ...extras.flat()].slice(0, 7);
 }

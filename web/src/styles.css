@@ -257,7 +257,7 @@ img {
   left: 50%;
   top: 46%;
   z-index: 2;
-  width: min(78vw, 320px);
+  width: min(90vw, calc(74dvh * 63 / 88));
   aspect-ratio: 63 / 88;
   transform: translate(-50%, -50%);
   border: 2px solid rgba(255, 255, 255, 0.55);
@@ -268,10 +268,10 @@ img {
 
 .stamp-spot {
   position: absolute;
-  left: 3%;
-  bottom: 2.5%;
-  width: 52%;
-  height: 10%;
+  left: 1%;
+  bottom: 0%;
+  width: 62%;
+  height: 15%;
   border: 2px solid #f5d76e;
   border-radius: 5px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);

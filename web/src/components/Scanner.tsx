@@ -24,7 +24,13 @@ function toBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement) {
+type CropRect = { sx: number; sy: number; sw: number; sh: number };
+
+type ImageCaptureLike = {
+  takePhoto: () => Promise<Blob>;
+};
+
+function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement, pad = 0.03): CropRect {
   const v = video.getBoundingClientRect();
   const g = guide.getBoundingClientRect();
   const videoRatio = video.videoWidth / video.videoHeight;
@@ -44,7 +50,6 @@ function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement) {
   }
   const scaleX = video.videoWidth / renderW;
   const scaleY = video.videoHeight / renderH;
-  const pad = 0.03;
   let sx = (g.left - v.left - offsetX) * scaleX;
   let sy = (g.top - v.top - offsetY) * scaleY;
   let sw = g.width * scaleX;
@@ -60,14 +65,101 @@ function coverSourceRect(video: HTMLVideoElement, guide: HTMLElement) {
   return { sx, sy, sw, sh };
 }
 
+function mapPreviewRectToPhoto(
+  videoWidth: number,
+  videoHeight: number,
+  photoWidth: number,
+  photoHeight: number,
+  rect: CropRect,
+): CropRect {
+  const videoAR = videoWidth / Math.max(videoHeight, 1);
+  const photoAR = photoWidth / Math.max(photoHeight, 1);
+  let usedW = photoWidth;
+  let usedH = photoHeight;
+  let offX = 0;
+  let offY = 0;
+  if (photoAR > videoAR) {
+    usedH = photoHeight;
+    usedW = photoHeight * videoAR;
+    offX = (photoWidth - usedW) / 2;
+  } else {
+    usedW = photoWidth;
+    usedH = photoWidth / videoAR;
+    offY = (photoHeight - usedH) / 2;
+  }
+  const scale = usedW / Math.max(videoWidth, 1);
+  return {
+    sx: offX + rect.sx * scale,
+    sy: offY + rect.sy * scale,
+    sw: rect.sw * scale,
+    sh: rect.sh * scale,
+  };
+}
+
+function drawCrop(
+  canvas: HTMLCanvasElement,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  rect: CropRect,
+  maxWidth = 2000,
+) {
+  const sx = Math.max(0, Math.min(rect.sx, sourceWidth - 8));
+  const sy = Math.max(0, Math.min(rect.sy, sourceHeight - 8));
+  const sw = Math.max(8, Math.min(rect.sw, sourceWidth - sx));
+  const sh = Math.max(8, Math.min(rect.sh, sourceHeight - sy));
+  const scale = sw > maxWidth ? maxWidth / sw : 1;
+  canvas.width = Math.round(sw * scale);
+  canvas.height = Math.round(sh * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  ctx.imageSmoothingEnabled = scale !== 1;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
+async function captureCard(video: HTMLVideoElement, guide: HTMLElement, canvas: HTMLCanvasElement) {
+  const preview = coverSourceRect(video, guide, 0.02);
+  const stream = video.srcObject;
+  if (stream instanceof MediaStream) {
+    const track = stream.getVideoTracks()[0];
+    const ImageCaptureCtor = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => ImageCaptureLike })
+      .ImageCapture;
+    if (track && ImageCaptureCtor) {
+      try {
+        const blob = await new ImageCaptureCtor(track).takePhoto();
+        const bitmap = await createImageBitmap(blob);
+        const mapped = mapPreviewRectToPhoto(
+          video.videoWidth,
+          video.videoHeight,
+          bitmap.width,
+          bitmap.height,
+          preview,
+        );
+        const ok = drawCrop(canvas, bitmap, bitmap.width, bitmap.height, mapped);
+        bitmap.close();
+        if (ok) {
+          const photo = await toBlob(canvas);
+          if (photo && photo.size > 12000) return photo;
+        }
+      } catch {
+        // iOS and some browsers have no still-photo capture.
+      }
+    }
+  }
+  if (!drawCrop(canvas, video, video.videoWidth, video.videoHeight, preview)) return null;
+  return toBlob(canvas);
+}
+
 export function Scanner({ lang, onAdd }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const guideRef = useRef<HTMLDivElement>(null);
+  const stampRef = useRef<HTMLSpanElement>(null);
   const captureCanvas = useRef<HTMLCanvasElement | null>(null);
   const langRef = useRef(lang);
   const { register } = useScanAction();
 
-  const [streamReady, setStreamReady] = useState(false);
   const [camTick, setCamTick] = useState(0);
   const [hint, setHint] = useState<string | null>("Kaart in het kader, gele vak linksonder");
   const [scanning, setScanning] = useState(false);
@@ -84,7 +176,6 @@ export function Scanner({ lang, onAdd }: Props) {
     let cancelled = false;
     const video = videoRef.current;
     setNeedsCamera(false);
-    setStreamReady(false);
 
     navigator.mediaDevices
       .getUserMedia({
@@ -101,10 +192,15 @@ export function Scanner({ lang, onAdd }: Props) {
           return;
         }
         stream = media;
+        const track = media.getVideoTracks()[0];
+        void track
+          ?.applyConstraints({
+            advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
+          })
+          .catch(() => undefined);
         if (video) {
           video.srcObject = media;
           void video.play();
-          setStreamReady(true);
         }
       })
       .catch(() => {
@@ -120,7 +216,7 @@ export function Scanner({ lang, onAdd }: Props) {
   const capture = useCallback(() => {
     const video = videoRef.current;
     const guide = guideRef.current;
-    if (!video || scanning || video.readyState < 2 || !video.videoWidth) return;
+    if (!video || scanning || video.readyState < 2 || !video.videoWidth || !guide) return;
 
     if (result) {
       setResult(null);
@@ -132,29 +228,16 @@ export function Scanner({ lang, onAdd }: Props) {
 
     captureCanvas.current ??= document.createElement("canvas");
     const canvas = captureCanvas.current;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    if (guide) {
-      const { sx, sy, sw, sh } = coverSourceRect(video, guide);
-      canvas.width = Math.max(720, Math.round(sw));
-      canvas.height = Math.round((canvas.width * sh) / sw);
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    } else {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-    }
 
     setScanning(true);
     setHint("Nummer lezen...");
 
-    void toBlob(canvas)
+    void captureCard(video, guide, canvas)
       .then(async (blob) => {
         if (!blob) throw new Error("Kon geen foto maken");
         const scan = await scanCard(blob, langRef.current);
         if (!scan.matches.length || !scan.bestMatch) {
-          setHint("Geen match. Houd het gele vak op het nummer.");
+          setHint("Geen match. Meer licht, kaart stiller, nummer in het gele vak.");
           return;
         }
         setResult(scan);
@@ -191,7 +274,7 @@ export function Scanner({ lang, onAdd }: Props) {
         <div className="vignette" />
         {!result && !needsCamera && (
           <div className="card-guide" ref={guideRef}>
-            <span className="stamp-spot" />
+            <span className="stamp-spot" ref={stampRef} />
           </div>
         )}
 

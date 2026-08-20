@@ -147,6 +147,7 @@ function extractCollector(text: string) {
     const t = Number(digits(total));
     if (!Number.isFinite(n) || !Number.isFinite(t)) return;
     if (n < 1 || n > 500 || t < 8 || t > 500) return;
+    if (t >= 20 && t <= 29 && n <= 9) return;
     let score = 8 + extra;
     if (n <= t + 80) score += 6;
     if (String(n).length >= 2) score += 2;
@@ -156,6 +157,9 @@ function extractCollector(text: string) {
 
   for (const match of cleaned.matchAll(/(\d{1,3}|[OQDIL]{1,3})\s*[\/\\:\-]\s*(\d{2,3})\b/g)) {
     add(match[1], match[2], 4);
+  }
+  for (const match of cleaned.matchAll(/(\d{2,3})7+\s+(\d{2,3})\b/g)) {
+    add(match[1], match[2], 6);
   }
   for (const match of cleaned.matchAll(/(\d{1,3})\s+[I1|]\s+(\d{2,3})\b/g)) {
     add(match[1], match[2], 2);
@@ -188,19 +192,26 @@ function resolvePrintedCode(raw: string) {
 export function extractSetCode(text: string) {
   const upper = tidy(text).toUpperCase();
   const compact = upper.replace(/[^A-Z0-9\/]/g, "");
+  const lang = "(?:EN|IN|FN|EH|EJ|EL|FR|DE|ES|IT|PT|NL|JP)";
 
   for (const code of knownCodesByLength()) {
     if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
-    const besideNumber = new RegExp(
-      `${code}(?:EN|FR|DE|ES|IT|PT|NL|JP)?\\d{1,3}[\\/7]\\d{2,4}`,
-    );
+    const besideNumber = new RegExp(`${code}${lang}?\\d{1,3}[\\/7]\\d{2,4}`);
     if (besideNumber.test(compact)) return code;
   }
 
   for (const code of knownCodesByLength()) {
     if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
-    const token = new RegExp(`(?<![A-Z0-9])${code}(?![A-Z0-9])`);
-    if (token.test(upper)) return code;
+    const withLang = new RegExp(`(?<![A-Z0-9])${code}\\s*${lang}\\b`);
+    if (withLang.test(upper)) return code;
+  }
+
+  for (const code of knownCodesByLength()) {
+    if (CODE_NOISE.has(code) || PRINT_LANG.test(code) || code.length < 3) continue;
+    const at = compact.indexOf(code);
+    if (at < 0) continue;
+    const after = compact.slice(at + code.length, at + code.length + 10);
+    if (new RegExp(`^${lang}?\\d{2,4}`).test(after)) return code;
   }
 
   return null;
@@ -287,7 +298,7 @@ export type StampId = {
 };
 
 export function extractStampId(text: string): Omit<StampId, "rawText" | "confidence"> {
-  const cleaned = tidy(text).toUpperCase().replace(/\b20[2-9]\d\b/g, " ");
+  const cleaned = tidy(text).toUpperCase().replace(/\b0*20[2-9]\d\b/g, " ");
   const collector = extractCollector(cleaned);
   let setCode = extractSetCode(cleaned);
   let number = collector.number;
@@ -323,41 +334,60 @@ export function extractStampId(text: string): Omit<StampId, "rawText" | "confide
   };
 }
 
-function mergeStamp(into: StampId, text: string, confidence: number) {
-  const parsed = extractStampId(text);
-  if (!into.setCode && parsed.setCode) into.setCode = parsed.setCode;
-  if (!into.collectorNumber && parsed.collectorNumber) into.collectorNumber = parsed.collectorNumber;
-  if (!into.setTotal && parsed.setTotal) into.setTotal = parsed.setTotal;
-  if (text.trim()) into.rawText = [into.rawText, text].filter(Boolean).join("\n");
-  into.confidence = Math.max(into.confidence, confidence);
-}
-
-export async function readStamp(regions: {
-  contrast: Buffer;
-  ink: Buffer;
-  inv: Buffer;
-  digits?: Buffer;
-}): Promise<StampId> {
-  const stamp: StampId = {
+function emptyStamp(): StampId {
+  return {
     setCode: null,
     collectorNumber: null,
     setTotal: null,
     rawText: "",
     confidence: 0,
   };
+}
 
-  const passes: Buffer[] = [regions.ink, regions.inv, regions.contrast];
+function stampRank(stamp: StampId) {
+  return (
+    (stamp.setCode ? 8 : 0) +
+    (stamp.collectorNumber ? 6 : 0) +
+    (stamp.setTotal ? 3 : 0) +
+    (stamp.setCode && stamp.collectorNumber ? 6 : 0)
+  );
+}
 
-  for (const image of passes) {
+function mergeCompatible(into: StampId, parsed: Omit<StampId, "rawText" | "confidence">) {
+  if (parsed.setCode && parsed.collectorNumber) {
+    into.setCode = parsed.setCode;
+    into.collectorNumber = parsed.collectorNumber;
+    if (parsed.setTotal) into.setTotal = parsed.setTotal;
+    return;
+  }
+  if (!into.setCode && parsed.setCode) into.setCode = parsed.setCode;
+  if (!into.collectorNumber && parsed.collectorNumber) into.collectorNumber = parsed.collectorNumber;
+  if (!into.setTotal && parsed.setTotal) into.setTotal = parsed.setTotal;
+}
+
+export async function readStamp(images: Buffer[]): Promise<StampId> {
+  const merged = emptyStamp();
+  const complete: StampId[] = [];
+
+  for (const image of images) {
     const result = await recognize(image, PSM.SPARSE_TEXT, STAMP_CHARS);
-    mergeStamp(stamp, result.text, result.confidence);
-    if (stamp.setCode && stamp.collectorNumber) break;
+    const parsed = extractStampId(result.text);
+    const candidate: StampId = {
+      ...parsed,
+      rawText: result.text,
+      confidence: result.confidence,
+    };
+    if (candidate.setCode && candidate.collectorNumber) complete.push(candidate);
+    mergeCompatible(merged, parsed);
+    if (result.text.trim()) merged.rawText = [merged.rawText, result.text].filter(Boolean).join("\n");
+    merged.confidence = Math.max(merged.confidence, result.confidence);
+    if (candidate.setCode && candidate.collectorNumber && candidate.setTotal) break;
   }
 
-  if (!stamp.collectorNumber && regions.digits) {
-    const result = await recognize(regions.digits, PSM.SPARSE_TEXT, "0123456789/ ");
-    mergeStamp(stamp, result.text, result.confidence);
+  if (complete.length) {
+    complete.sort((a, b) => stampRank(b) - stampRank(a) || b.confidence - a.confidence);
+    return complete[0];
   }
 
-  return stamp;
+  return merged;
 }
